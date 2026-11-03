@@ -1,0 +1,1041 @@
+//! The choreography editor: state, playback clock, saving, music, keyboard,
+//! toolbar, formation list and dialogs. The stage, inspector and timeline
+//! live in their own modules.
+
+use std::collections::BTreeSet;
+use std::rc::Rc;
+
+use arrus_api::{ChoreographyDoc, ChoreographyId, ChoreographySummary, Conflict, CreateChoreography, SaveChoreography, Saved};
+use arrus_core::timeline::{self, Easing};
+use arrus_core::{Choreography, Comment, StageBackground, StageBackgroundFile};
+use egui::{Align, Event, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, Sense, Ui, vec2};
+
+use super::widgets::{self, Choice};
+use super::{App, ApiError, Net, Screen, inspector, net, stage, timeline as timeline_ui};
+use crate::edit::{self, Selection};
+use crate::geom::{self, P};
+use crate::undo::{UNDO_LIMIT, UndoStack};
+use crate::view::View;
+use crate::web::{self, Audio};
+use crate::{theme, util};
+
+/// An undo step. The (possibly large) custom background image is shared, not copied.
+#[derive(Clone)]
+pub struct Snap {
+    doc: Choreography,
+    bg: Option<Rc<String>>,
+}
+
+pub enum EdModal {
+    RemoveDancers(BTreeSet<usize>),
+    Conflict(Conflict),
+    RemoveMusic,
+}
+
+pub struct Editor {
+    pub summary: ChoreographySummary,
+    /// Working copy, without the custom background image (kept in `bg_data`).
+    pub doc: Choreography,
+    /// Base64 of the custom background image.
+    pub bg_data: Option<Rc<String>>,
+    pub bg_tex: Option<(usize, egui::TextureHandle)>,
+    bg_loading: Option<usize>,
+    bg_failed: Option<usize>,
+    undo: UndoStack<Snap>,
+    pub dirty: bool,
+    edit_gen: u64,
+    pub t: f64,
+    pub playing: bool,
+    last_tick: Option<f64>,
+    pub audio: Option<Audio>,
+    pub view: Option<View>,
+    pub need_fit: bool,
+    /// The user zoomed or panned (so window resizes keep their view).
+    pub view_moved: bool,
+    pub last_stage_size: egui::Vec2,
+    pub sel: Selection,
+    pub drag: Option<stage::Drag>,
+    pub easing: Easing,
+    pub can_edit: bool,
+    pub compact: bool,
+    pub scrubbing: bool,
+    pub space_down: bool,
+    pub space_pan_used: bool,
+    pub modal: Option<EdModal>,
+    saving: bool,
+    pub music_busy: bool,
+    pub show_formations: bool,
+    /// egui time of this frame.
+    pub now: f64,
+}
+
+pub fn open(app: &mut App, id: ChoreographyId) {
+    app.opening = Some(id);
+    app.screen = Screen::Editor;
+    app.editor = None;
+    app.net.spawn(async move {
+        let r = net::get::<ChoreographyDoc>(&format!("/api/choreographies/{id}")).await;
+        move |app: &mut App| {
+            if app.opening != Some(id) {
+                return;
+            }
+            app.opening = None;
+            match r {
+                Ok(doc) => {
+                    let compact = app.compact;
+                    app.editor = Some(Box::new(Editor::new(doc, compact)));
+                    app.screen = Screen::Editor;
+                    web::set_hash_choreography(Some(id));
+                }
+                Err(e) => {
+                    app.screen = Screen::Library;
+                    app.fail(e);
+                }
+            }
+        }
+    });
+}
+
+fn music_url(s: &ChoreographySummary) -> String {
+    let v = s.music.as_ref().map_or(0, |m| m.bytes) ^ (js_sys::Date::now() as u64);
+    format!("/api/choreographies/{}/music?v={v}", s.id)
+}
+
+impl Editor {
+    pub fn new(d: ChoreographyDoc, compact: bool) -> Self {
+        let mut doc = d.data;
+        let bg_data = doc
+            .stage_background
+            .as_mut()
+            .and_then(|b| b.file.as_mut())
+            .and_then(|f| f.image_file_data.take())
+            .filter(|s| !s.trim().is_empty())
+            .map(Rc::new);
+        if doc.formations.is_empty() {
+            doc.formations.push(arrus_core::Formation::new());
+        }
+        let audio = d.summary.music.as_ref().and_then(|_| Audio::new(&music_url(&d.summary)));
+        Self {
+            summary: d.summary,
+            doc,
+            bg_data,
+            bg_tex: None,
+            bg_loading: None,
+            bg_failed: None,
+            undo: UndoStack::new(UNDO_LIMIT),
+            dirty: false,
+            edit_gen: 0,
+            t: 0.0,
+            playing: false,
+            last_tick: None,
+            audio,
+            view: None,
+            need_fit: true,
+            view_moved: false,
+            last_stage_size: egui::Vec2::ZERO,
+            sel: Selection::None,
+            drag: None,
+            easing: Easing::Linear,
+            can_edit: false,
+            compact,
+            scrubbing: false,
+            space_down: false,
+            space_pan_used: false,
+            modal: None,
+            saving: false,
+            music_busy: false,
+            show_formations: !compact,
+            now: 0.0,
+        }
+    }
+
+    // ---- editing ---------------------------------------------------------
+
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.edit_gen += 1;
+    }
+
+    /// Apply an edit with an undo step (merged with the previous one when the
+    /// same `key` was edited a moment ago).
+    pub fn edit(&mut self, key: Option<&str>, f: impl FnOnce(&mut Choreography)) {
+        let (doc, bg) = (&self.doc, &self.bg_data);
+        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone() }, key, self.now);
+        f(&mut self.doc);
+        self.mark_dirty();
+        self.sanitize();
+    }
+
+    /// Start a drag gesture that mutates `doc` directly over several frames.
+    pub fn begin_gesture(&mut self) {
+        let (doc, bg) = (&self.doc, &self.bg_data);
+        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone() }, None, self.now);
+        self.mark_dirty();
+    }
+
+    pub fn end_gesture(&mut self) {
+        self.undo.break_merge();
+    }
+
+    /// Change settings: an undoable edit for writers, a local view change for viewers.
+    pub fn set_settings(&mut self, s: arrus_core::Settings, key: Option<&str>) {
+        if self.can_edit {
+            self.edit(key, |d| d.settings = s);
+        } else {
+            self.doc.settings = s;
+        }
+    }
+
+    pub fn set_background(&mut self, bg: Option<StageBackground>, data: Option<Rc<String>>) {
+        let (doc, old) = (&self.doc, &self.bg_data);
+        self.undo.record(|| Snap { doc: doc.clone(), bg: old.clone() }, None, self.now);
+        self.doc.stage_background = bg;
+        self.bg_data = data;
+        self.mark_dirty();
+    }
+
+    /// Use a custom image (base64) as the stage background.
+    pub fn set_custom_background(&mut self, b64: String) {
+        let old = self.doc.stage_background.clone();
+        let bg = StageBackground {
+            file: Some(StageBackgroundFile {
+                last_selection_timestamp: Some(web::now_secs()),
+                ..Default::default()
+            }),
+            aspect_ratio: old.as_ref().map_or_else(|| "scaleToFit".into(), |b| b.aspect_ratio.clone()),
+            alpha: old.as_ref().map_or(1.0, |b| b.alpha),
+            is_backstage_separated: old.as_ref().is_some_and(|b| b.is_backstage_separated),
+            extra: old.map(|b| b.extra).unwrap_or_default(),
+        };
+        self.set_background(Some(bg), Some(Rc::new(b64)));
+    }
+
+    fn sanitize(&mut self) {
+        let f = self.cur();
+        let n = edit::props(&self.doc, f).len();
+        self.sel.sanitize(self.doc.dancer_count(), n);
+    }
+
+    fn snap(&self) -> Snap {
+        Snap { doc: self.doc.clone(), bg: self.bg_data.clone() }
+    }
+
+    fn restore(&mut self, s: Snap) {
+        self.doc = s.doc;
+        self.bg_data = s.bg;
+        self.mark_dirty();
+        self.sanitize();
+        self.t = self.t.min(self.timeline_len());
+    }
+
+    pub fn undo(&mut self) {
+        if let Ok(s) = self.undo.undo(self.snap()) {
+            self.restore(s);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Ok(s) = self.undo.redo(self.snap()) {
+            self.restore(s);
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.undo.can_redo()
+    }
+
+    /// The full document to save (with the background image put back).
+    fn doc_for_save(&self) -> Choreography {
+        let mut d = self.doc.clone();
+        d.last_edit_timestamp = web::now_secs();
+        if let Some(img) = &self.bg_data
+            && let Some(bg) = d.stage_background.as_mut()
+        {
+            bg.file.get_or_insert_with(Default::default).image_file_data = Some((**img).clone());
+        }
+        d
+    }
+
+    /// Formation edits apply to (the one held or being entered).
+    pub fn cur(&self) -> usize {
+        edit::formation_at(&self.doc, self.t)
+    }
+
+    pub fn delete_selection(&mut self) {
+        match self.sel.clone() {
+            Selection::Dancers(s) if !s.is_empty() => self.modal = Some(EdModal::RemoveDancers(s)),
+            Selection::Prop(i) => {
+                let f = self.cur();
+                self.edit(None, |d| {
+                    edit::remove_prop(d, f, i);
+                });
+                self.sel = Selection::None;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn add_dancer(&mut self) {
+        let f = self.cur();
+        let mut idx = 0;
+        self.edit(None, |d| idx = edit::add_dancer(d, f));
+        self.sel = Selection::one(idx);
+    }
+
+    pub fn add_prop(&mut self, kind: arrus_core::PropType) {
+        let f = self.cur();
+        let mut idx = None;
+        self.edit(None, |d| idx = edit::add_prop(d, f, kind));
+        if let Some(i) = idx {
+            self.sel = Selection::Prop(i);
+        }
+    }
+
+    /// Nudge the selection by a screen direction (arrow keys).
+    fn nudge(&mut self, screen_dir: (f64, f64), step: f64) {
+        let inv = self.doc.settings.is_scene_directions_inverted;
+        let s = if inv { -step } else { step };
+        let d = P::new(screen_dir.0 * s, screen_dir.1 * s);
+        let f = self.cur();
+        let bounds = geom::drawable_bounds(&self.doc);
+        match self.sel.clone() {
+            Selection::Dancers(set) if !set.is_empty() => {
+                self.edit(Some("nudge"), |doc| edit::nudge_dancers(doc, f, &set, d, bounds));
+            }
+            Selection::Prop(i) => self.edit(Some("nudge"), |doc| {
+                if let Some(p) = edit::prop_mut(doc, f, i) {
+                    p.position = bounds.clamp(geom::add(p.position, d));
+                }
+            }),
+            _ => {}
+        }
+    }
+
+    // ---- playback --------------------------------------------------------
+
+    pub fn total(&self) -> f64 {
+        timeline::total_duration(&self.doc)
+    }
+
+    /// Choreography length, extended to the music's length when longer.
+    pub fn timeline_len(&self) -> f64 {
+        let total = self.total();
+        match self.audio.as_ref().and_then(Audio::duration) {
+            Some(d) => total.max(d),
+            None => total,
+        }
+    }
+
+    fn tick(&mut self) {
+        let now = self.now;
+        if self.playing {
+            let len = self.timeline_len();
+            match &self.audio {
+                Some(a) => {
+                    self.t = a.time();
+                    if a.paused() {
+                        self.playing = false;
+                    }
+                }
+                None => self.t += (now - self.last_tick.unwrap_or(now)).clamp(0.0, 0.25),
+            }
+            if self.t >= len {
+                self.t = len;
+                self.pause();
+            }
+        }
+        self.last_tick = Some(now);
+    }
+
+    pub fn play(&mut self) {
+        let len = self.timeline_len();
+        if len <= 0.0 {
+            return;
+        }
+        if self.t >= len - 0.01 {
+            self.t = 0.0;
+        }
+        self.drag = None;
+        if let Some(a) = &self.audio {
+            a.seek(self.t);
+            a.play();
+        }
+        self.playing = true;
+        self.last_tick = Some(self.now);
+    }
+
+    pub fn pause(&mut self) {
+        if let Some(a) = &self.audio {
+            a.pause();
+            self.t = a.time().min(self.timeline_len());
+        }
+        self.playing = false;
+    }
+
+    pub fn toggle_play(&mut self) {
+        if self.playing { self.pause() } else { self.play() }
+    }
+
+    pub fn seek(&mut self, t: f64) {
+        self.t = t.clamp(0.0, self.timeline_len().max(0.0));
+        if let Some(a) = &self.audio {
+            a.seek(self.t);
+        }
+    }
+
+    pub fn go_to_formation(&mut self, i: usize) {
+        self.seek(timeline::formation_time(&self.doc, i));
+    }
+
+    pub fn prev_formation(&mut self) {
+        let spans = timeline::spans(&self.doc);
+        let f = self.cur();
+        let Some(s) = spans.get(f) else { return };
+        if self.t > s.hold_start + 0.25 || f == 0 {
+            self.seek(s.hold_start);
+        } else {
+            self.seek(spans[f - 1].hold_start);
+        }
+    }
+
+    pub fn next_formation(&mut self) {
+        let f = self.cur();
+        if f + 1 < self.doc.formations.len() {
+            self.go_to_formation(f + 1);
+        } else {
+            let end = self.total();
+            self.seek(end);
+        }
+    }
+
+    fn reload_audio(&mut self) {
+        self.pause();
+        self.audio = self.summary.music.as_ref().and_then(|_| Audio::new(&music_url(&self.summary)));
+    }
+
+    // ---- background texture ----------------------------------------------
+
+    fn update_background(&mut self, net: &Net) {
+        let Some(data) = &self.bg_data else {
+            self.bg_tex = None;
+            return;
+        };
+        let key = Rc::as_ptr(data) as usize;
+        if self.bg_tex.as_ref().map(|t| t.0) == Some(key) || self.bg_loading == Some(key) || self.bg_failed == Some(key) {
+            return;
+        }
+        self.bg_loading = Some(key);
+        let url = format!("data:{};base64,{}", web::sniff_image_mime(data), data.trim());
+        let net = net.clone();
+        let id = self.summary.id;
+        web::decode_image(&url, move |r| {
+            net.post(move |app: &mut App| {
+                let ctx = app.net.ctx().clone();
+                let Some(ed) = app.editor.as_mut().filter(|e| e.summary.id == id) else { return };
+                if ed.bg_loading == Some(key) {
+                    ed.bg_loading = None;
+                }
+                match r {
+                    Ok(img) => {
+                        let tex = ctx.load_texture("stage_background", img, egui::TextureOptions::LINEAR);
+                        ed.bg_tex = Some((key, tex));
+                    }
+                    Err(e) => {
+                        ed.bg_failed = Some(key);
+                        app.toast_error(e);
+                    }
+                }
+            });
+        });
+    }
+}
+
+// ---- server actions -------------------------------------------------------
+
+fn editor_for(app: &mut App, id: ChoreographyId) -> Option<&mut Editor> {
+    app.editor.as_deref_mut().filter(|e| e.summary.id == id)
+}
+
+pub fn save(ed: &mut Editor, app: &mut App) {
+    if ed.saving || !ed.can_edit {
+        return;
+    }
+    ed.saving = true;
+    let id = ed.summary.id;
+    let gen_at = ed.edit_gen;
+    let body = SaveChoreography { base_revision: ed.summary.revision, data: ed.doc_for_save() };
+    app.net.spawn(async move {
+        let r = net::send::<_, Saved>("PUT", &format!("/api/choreographies/{id}"), &body).await;
+        move |app: &mut App| {
+            let Some(ed) = editor_for(app, id) else { return };
+            ed.saving = false;
+            match r {
+                Ok(s) => {
+                    ed.summary = s.summary;
+                    if ed.edit_gen == gen_at {
+                        ed.dirty = false;
+                    }
+                    app.toast("Saved");
+                    app.refresh_storage();
+                }
+                Err(ApiError::Conflict(c)) => ed.modal = Some(EdModal::Conflict(c)),
+                Err(e) => app.fail(e),
+            }
+        }
+    });
+}
+
+fn save_as_copy(ed: &mut Editor, app: &mut App) {
+    ed.saving = true;
+    let old_id = ed.summary.id;
+    let mut data = ed.doc_for_save();
+    data.name = edit::copy_name(&data.name);
+    let name = data.name.clone();
+    let body = CreateChoreography { team_id: Some(ed.summary.team_id), data };
+    app.net.spawn(async move {
+        let r = net::send::<_, ChoreographySummary>("POST", "/api/choreographies", &body).await;
+        let r = match r {
+            Ok(s) => net::get::<ChoreographyDoc>(&format!("/api/choreographies/{}", s.id)).await,
+            Err(e) => Err(e),
+        };
+        move |app: &mut App| {
+            if let Some(ed) = editor_for(app, old_id) {
+                ed.saving = false;
+            }
+            match r {
+                Ok(doc) => {
+                    let compact = app.compact;
+                    let mut new = Editor::new(doc, compact);
+                    if let Some(old) = app.editor.take() {
+                        new.t = old.t.min(new.timeline_len());
+                        new.view = old.view;
+                        new.need_fit = old.view.is_none();
+                        new.view_moved = old.view_moved;
+                        new.easing = old.easing;
+                        new.show_formations = old.show_formations;
+                    }
+                    web::set_hash_choreography(Some(new.summary.id));
+                    app.editor = Some(Box::new(new));
+                    app.toast(format!("Saved as “{name}”"));
+                    app.refresh_storage();
+                }
+                Err(e) => app.fail(e),
+            }
+        }
+    });
+}
+
+fn upload_music(ed: &mut Editor, app: &mut App) {
+    let id = ed.summary.id;
+    let net = app.net.clone();
+    web::pick_files("audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac", false, move |files| {
+        let Some(file) = files.into_iter().next() else { return };
+        net.post(move |app: &mut App| {
+            if file.size() > arrus_api::MAX_MUSIC_BYTES as f64 {
+                app.toast_error(format!(
+                    "That file is too big (limit {}).",
+                    util::fmt_bytes(arrus_api::MAX_MUSIC_BYTES)
+                ));
+                return;
+            }
+            let mut ct = file.type_();
+            if !ct.starts_with("audio/") {
+                ct = match util::extension(&file.name()).as_str() {
+                    "mp3" => "audio/mpeg",
+                    "m4a" | "aac" => "audio/mp4",
+                    "wav" => "audio/wav",
+                    "ogg" => "audio/ogg",
+                    "flac" => "audio/flac",
+                    _ => "audio/mpeg",
+                }
+                .into();
+            }
+            let Some(ed) = editor_for(app, id) else { return };
+            ed.music_busy = true;
+            app.net.spawn(async move {
+                let r = net::upload::<ChoreographySummary>("PUT", &format!("/api/choreographies/{id}/music"), file, ct).await;
+                move |app: &mut App| on_music(app, id, r, "Music uploaded")
+            });
+        });
+    });
+}
+
+fn remove_music(ed: &mut Editor, app: &mut App) {
+    let id = ed.summary.id;
+    ed.music_busy = true;
+    app.net.spawn(async move {
+        let r = net::delete_json::<ChoreographySummary>(&format!("/api/choreographies/{id}/music")).await;
+        move |app: &mut App| on_music(app, id, r, "Music removed")
+    });
+}
+
+fn on_music(app: &mut App, id: ChoreographyId, r: net::ApiResult<ChoreographySummary>, done: &str) {
+    let Some(ed) = editor_for(app, id) else { return };
+    ed.music_busy = false;
+    match r {
+        Ok(s) => {
+            // Music does not change the document revision we are editing against.
+            let rev = ed.summary.revision;
+            ed.summary = s;
+            ed.summary.revision = rev;
+            ed.reload_audio();
+            app.toast(done);
+            app.refresh_storage();
+        }
+        Err(e) => app.fail(e),
+    }
+}
+
+pub fn pick_background(ed: &Editor, app: &App) {
+    let id = ed.summary.id;
+    let net = app.net.clone();
+    web::pick_files("image/png,image/jpeg", false, move |files| {
+        let Some(file) = files.into_iter().next() else { return };
+        if file.size() > 8.0 * 1024.0 * 1024.0 {
+            net.post(|app: &mut App| app.toast_error("Please choose an image under 8 MB."));
+            return;
+        }
+        web::read_data_url(&file, move |r| {
+            net.post(move |app: &mut App| match r {
+                Ok(url) => {
+                    let b64 = url.split_once(',').map(|(_, b)| b.to_owned()).unwrap_or_default();
+                    if let Some(ed) = editor_for(app, id) {
+                        ed.set_custom_background(b64);
+                    }
+                }
+                Err(e) => app.toast_error(e),
+            });
+        });
+    });
+}
+
+// ---- frame ----------------------------------------------------------------
+
+pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
+    ed.now = ui.input(|i| i.time);
+    ed.can_edit = app.can_edit();
+    if ed.compact != app.compact {
+        ed.compact = app.compact;
+        ed.need_fit = true;
+    }
+    ed.tick();
+    if ed.playing {
+        ui.ctx().request_repaint();
+    }
+    keyboard(ed, app, ui);
+    if ed.can_edit && !ed.playing && !ed.scrubbing {
+        let snapped = edit::snap_out_of_transition(&ed.doc, ed.t);
+        if snapped != ed.t {
+            ed.seek(snapped);
+        }
+    }
+    ed.update_background(&app.net);
+
+    toolbar(ed, app, ui);
+    match timeline_ui::show(ed, ui) {
+        Some(timeline_ui::MusicAction::Upload) => upload_music(ed, app),
+        Some(timeline_ui::MusicAction::Remove) => ed.modal = Some(EdModal::RemoveMusic),
+        None => {}
+    }
+    formations_panel(ed, ui);
+    if !ed.compact {
+        inspector::show(ed, app, ui);
+    }
+    egui::CentralPanel::default().frame(Frame::new().fill(theme::BG)).show(ui, |ui| stage::show(ed, ui));
+    modals(ed, app, ui.ctx());
+}
+
+fn keyboard(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let save_key = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+    if ctx.input_mut(|i| i.consume_shortcut(&save_key)) && ed.can_edit {
+        save(ed, app);
+    }
+    if ctx.egui_wants_keyboard_input() || ed.modal.is_some() {
+        return;
+    }
+    if ed.can_edit {
+        let redo1 = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        let redo2 = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
+        let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+        if ctx.input_mut(|i| i.consume_shortcut(&redo1) || i.consume_shortcut(&redo2)) {
+            ed.redo();
+        } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
+            ed.undo();
+        }
+    }
+    // Space: play/pause on release, unless it was held to pan.
+    let (pressed, released) = ctx.input_mut(|i| {
+        let (mut p, mut r) = (false, false);
+        i.events.retain(|e| match e {
+            Event::Key { key: Key::Space, pressed, repeat, .. } => {
+                if *pressed && !*repeat {
+                    p = true;
+                }
+                if !*pressed {
+                    r = true;
+                }
+                false
+            }
+            _ => true,
+        });
+        (p, r)
+    });
+    if pressed {
+        ed.space_down = true;
+        ed.space_pan_used = false;
+    }
+    if released && ed.space_down {
+        ed.space_down = false;
+        if !ed.space_pan_used {
+            ed.toggle_play();
+        }
+    }
+
+    let has_sel = !matches!(ed.sel, Selection::None);
+    let arrows = [(Key::ArrowLeft, (-1.0, 0.0)), (Key::ArrowRight, (1.0, 0.0)), (Key::ArrowUp, (0.0, -1.0)), (Key::ArrowDown, (0.0, 1.0))];
+    for (key, dir) in arrows {
+        if ed.can_edit && has_sel && !ed.playing {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, key)) {
+                ed.nudge(dir, 1.0);
+            } else if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key)) {
+                ed.nudge(dir, geom::SNAP_STEP);
+            }
+        } else if dir.1 == 0.0 && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key)) {
+            if dir.0 < 0.0 { ed.prev_formation() } else { ed.next_formation() }
+        }
+    }
+    if ed.can_edit
+        && !ed.playing
+        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace))
+    {
+        ed.delete_selection();
+    }
+    if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        ed.sel = Selection::None;
+        ed.drag = None;
+    }
+}
+
+fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
+    egui::Panel::top("editor_bar")
+        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(12, 7)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let back = if ed.compact { "←" } else { "← Library" };
+                if ui.button(back).on_hover_text("Back to the library").clicked() {
+                    if ed.dirty {
+                        app.leave_to = Some(Screen::Library);
+                    } else {
+                        app.close_editor();
+                    }
+                }
+                if ed.compact {
+                    let label = if ed.show_formations { "Hide formations" } else { "Formations" };
+                    if ui.add(egui::Button::selectable(ed.show_formations, label)).clicked() {
+                        ed.show_formations = !ed.show_formations;
+                    }
+                }
+                if ed.compact {
+                    widgets::badge(ui, "View only", theme::TEXT_WEAK);
+                    ui.add(egui::Label::new(RichText::new(&ed.doc.name).strong().size(16.0)).truncate());
+                    return;
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new(&ed.doc.name).strong().size(16.0));
+                if !ed.can_edit {
+                    widgets::badge(ui, "View only", theme::TEXT_WEAK).on_hover_text(
+                        if app.me.as_ref().is_some_and(|m| m.can_write) {
+                            "Editing is available on a computer with a wider window."
+                        } else {
+                            "You can view this choreography; ask your admin for write access to edit."
+                        },
+                    );
+                } else if ed.saving {
+                    ui.spinner();
+                    ui.label(RichText::new("Saving…").color(theme::TEXT_WEAK));
+                } else if ed.dirty {
+                    ui.label(RichText::new("● Unsaved changes").color(theme::WARN));
+                } else {
+                    ui.label(RichText::new("All changes saved").color(theme::TEXT_FAINT)).on_hover_text(format!(
+                        "Revision {} · saved by {} · {}",
+                        ed.summary.revision,
+                        ed.summary.updated_by,
+                        web::local_datetime(ed.summary.updated_at)
+                    ));
+                }
+                if ed.can_edit {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let save_btn = ui.add_enabled_ui(ed.dirty && !ed.saving, |ui| widgets::primary_button(ui, "Save"));
+                        if save_btn.inner.on_hover_text("Save (Ctrl/Cmd+S)").clicked() {
+                            save(ed, app);
+                        }
+                        if ui.add_enabled(ed.can_redo(), egui::Button::new("↷ Redo")).on_hover_text("Shift+Ctrl/Cmd+Z").clicked() {
+                            ed.redo();
+                        }
+                        if ui.add_enabled(ed.can_undo(), egui::Button::new("↶ Undo")).on_hover_text("Ctrl/Cmd+Z").clicked() {
+                            ed.undo();
+                        }
+                    });
+                }
+            });
+        });
+}
+
+fn formations_panel(ed: &mut Editor, ui: &mut Ui) {
+    let panel = egui::Panel::left("formations")
+        .resizable(true)
+        .default_size(250.0)
+        .size_range(200.0..=420.0)
+        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)));
+    if ed.compact {
+        let mut open = ed.show_formations;
+        panel.show_collapsible(ui, &mut open, |ui| formations_ui(ed, ui));
+        ed.show_formations = open;
+    } else {
+        panel.show(ui, |ui| formations_ui(ed, ui));
+    }
+}
+
+fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
+    let cur = ed.cur();
+    let n = ed.doc.formations.len();
+    ui.horizontal(|ui| {
+        widgets::section(ui, "Formations");
+        ui.label(RichText::new(n.to_string()).small().color(theme::TEXT_FAINT));
+    });
+    let row_h = if ed.compact { 44.0 } else { 32.0 };
+    let list_h = (ui.available_height() * if ed.can_edit { 0.45 } else { 0.6 }).max(120.0);
+    let mut go = None;
+    ScrollArea::vertical().id_salt("formation_list").max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
+        for i in 0..n {
+            let f = &ed.doc.formations[i];
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+            let p = ui.painter();
+            let selected = i == cur;
+            let fill = if selected {
+                theme::ACCENT_DIM
+            } else if resp.hovered() {
+                theme::HOVER
+            } else {
+                theme::SURFACE
+            };
+            p.rect_filled(rect.shrink2(vec2(0.0, 1.5)), 6.0, fill);
+            let num_c = rect.left_center() + vec2(18.0, 0.0);
+            p.circle_filled(num_c, 11.0, if selected { theme::ACCENT } else { theme::RAISED });
+            p.text(num_c, egui::Align2::CENTER_CENTER, (i + 1).to_string(), egui::FontId::proportional(12.0), theme::TEXT);
+            let name = f.name.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+            let dur = util::fmt_secs(f.duration);
+            let right = p.text(
+                rect.right_center() - vec2(10.0, 0.0),
+                egui::Align2::RIGHT_CENTER,
+                &dur,
+                egui::FontId::proportional(12.5),
+                theme::TEXT_WEAK,
+            );
+            if !name.is_empty() {
+                let clip = egui::Rect::from_min_max(rect.min + vec2(36.0, 0.0), egui::pos2(right.left() - 6.0, rect.max.y));
+                ui.painter().with_clip_rect(clip).text(
+                    clip.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    egui::FontId::proportional(14.0),
+                    theme::TEXT,
+                );
+            }
+            if !f.comments.is_empty() {
+                p.circle_filled(rect.right_top() + vec2(-6.0, 7.0), 3.0, theme::SELECT);
+            }
+            let resp = if f.comments.is_empty() {
+                resp
+            } else {
+                resp.on_hover_text(f.comments.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join("\n"))
+            };
+            if resp.clicked() {
+                go = Some(i);
+            }
+        }
+    });
+    if let Some(i) = go {
+        ed.pause();
+        ed.go_to_formation(i);
+    }
+
+    if ed.can_edit {
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("+ Add").on_hover_text("New formation after this one, with the same positions").clicked() {
+                let mut at = 0;
+                ed.edit(None, |d| at = edit::add_formation_after(d, cur));
+                ed.go_to_formation(at);
+            }
+            if ui.button("Duplicate").clicked() {
+                let mut at = None;
+                ed.edit(None, |d| at = edit::duplicate_formation(d, cur));
+                if let Some(at) = at {
+                    ed.go_to_formation(at);
+                }
+            }
+            if ui.add_enabled(n > 1, egui::Button::new("Delete")).on_disabled_hover_text("A choreography keeps at least one formation").clicked() {
+                let mut next = None;
+                ed.edit(None, |d| next = edit::delete_formation(d, cur));
+                if let Some(next) = next {
+                    ed.go_to_formation(next);
+                }
+            }
+            if ui.add_enabled(cur > 0, egui::Button::new("↑")).on_hover_text("Move earlier").clicked() {
+                let mut to = None;
+                ed.edit(None, |d| to = edit::move_formation(d, cur, true));
+                if let Some(to) = to {
+                    ed.go_to_formation(to);
+                }
+            }
+            if ui.add_enabled(cur + 1 < n, egui::Button::new("↓")).on_hover_text("Move later").clicked() {
+                let mut to = None;
+                ed.edit(None, |d| to = edit::move_formation(d, cur, false));
+                if let Some(to) = to {
+                    ed.go_to_formation(to);
+                }
+            }
+        });
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    let cur = ed.cur();
+    let Some(f) = ed.doc.formations.get(cur).cloned() else { return };
+    ScrollArea::vertical().id_salt("formation_details").auto_shrink([false, true]).show(ui, |ui| {
+        widgets::section(ui, &format!("Formation {}", cur + 1));
+        if ed.can_edit {
+            let mut name = f.name.clone().unwrap_or_default();
+            if ui.add(egui::TextEdit::singleline(&mut name).hint_text("Name (optional)").desired_width(f32::INFINITY)).changed() {
+                ed.edit(Some(&format!("fname{cur}")), |d| {
+                    d.formations[cur].name = (!name.trim().is_empty()).then_some(name);
+                });
+            }
+            ui.add_space(4.0);
+            egui::Grid::new("formation_timing").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Hold");
+                let mut dur = f.duration;
+                if ui.add(egui::DragValue::new(&mut dur).speed(0.1).range(0.0..=3600.0).max_decimals(2).suffix(" s")).changed() {
+                    ed.edit(Some(&format!("fdur{cur}")), |d| d.formations[cur].duration = dur);
+                }
+                ui.end_row();
+                ui.label("Transition in");
+                let mut tr = f.transition_duration;
+                let r = ui.add_enabled(
+                    cur > 0,
+                    egui::DragValue::new(&mut tr).speed(0.1).range(0.0..=600.0).max_decimals(2).suffix(" s"),
+                );
+                if r.on_disabled_hover_text("The first formation has no transition").changed() {
+                    ed.edit(Some(&format!("ftr{cur}")), |d| d.formations[cur].transition_duration = tr);
+                }
+                ui.end_row();
+            });
+            widgets::section(ui, "Comments");
+            let mut remove = None;
+            for (k, c) in f.comments.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    let mut text = c.text.clone();
+                    let w = ui.available_width() - 30.0;
+                    if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(w)).changed() {
+                        ed.edit(Some(&format!("fcom{cur}-{k}")), |d| {
+                            if let Some(c) = d.formations[cur].comments.get_mut(k) {
+                                c.text = text;
+                            }
+                        });
+                    }
+                    if ui.small_button("✕").on_hover_text("Delete comment").clicked() {
+                        remove = Some(k);
+                    }
+                });
+            }
+            if let Some(k) = remove {
+                ed.edit(None, |d| {
+                    d.formations[cur].comments.remove(k);
+                });
+            }
+            if ui.button("+ Add comment").clicked() {
+                ed.edit(None, |d| d.formations[cur].comments.push(Comment { text: String::new(), extra: Default::default() }));
+            }
+        } else {
+            if let Some(n) = f.name.as_deref().filter(|s| !s.trim().is_empty()) {
+                ui.label(RichText::new(n).strong());
+            }
+            ui.label(
+                RichText::new(format!(
+                    "Hold {}{}",
+                    util::fmt_secs(f.duration),
+                    if cur > 0 { format!(" · transition {}", util::fmt_secs(f.transition_duration)) } else { String::new() }
+                ))
+                .color(theme::TEXT_WEAK),
+            );
+            for c in f.comments.iter().filter(|c| !c.text.trim().is_empty()) {
+                ui.add_space(4.0);
+                widgets::card().inner_margin(Margin::same(8)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(&c.text);
+                });
+            }
+        }
+    });
+}
+
+fn modals(ed: &mut Editor, app: &mut App, ctx: &egui::Context) {
+    let Some(m) = ed.modal.take() else { return };
+    let keep = match &m {
+        EdModal::RemoveDancers(set) => {
+            let n = set.len();
+            let title = if n == 1 { "Remove this dancer?".to_owned() } else { format!("Remove {n} dancers?") };
+            match widgets::dialog(ctx, "rm_dancers", &title, "Remove", true, true, |ui| {
+                ui.label("They are removed from every formation of this choreography (you can undo).");
+            }) {
+                Some(Choice::Confirm) => {
+                    ed.edit(None, |d| edit::remove_dancers(d, set));
+                    ed.sel = Selection::None;
+                    false
+                }
+                Some(Choice::Cancel) => false,
+                None => true,
+            }
+        }
+        EdModal::Conflict(c) => {
+            let who = c.updated_by.clone();
+            let when = web::local_datetime(c.updated_at);
+            let copy = edit::copy_name(&ed.doc.name);
+            match widgets::dialog(ctx, "conflict", "Someone else saved", "Save as new choreography", false, true, |ui| {
+                ui.label(format!(
+                    "{who} saved this choreography at {when} since you opened it. Save your version as a new choreography?"
+                ));
+                ui.add_space(4.0);
+                ui.label(RichText::new(format!("Your version will be saved as “{copy}”.")).small().color(theme::TEXT_WEAK));
+            }) {
+                Some(Choice::Confirm) => {
+                    save_as_copy(ed, app);
+                    false
+                }
+                Some(Choice::Cancel) => false,
+                None => true,
+            }
+        }
+        EdModal::RemoveMusic => {
+            match widgets::dialog(ctx, "rm_music", "Remove the music?", "Remove", true, true, |ui| {
+                ui.label("The track is deleted from the server for everyone in the team.");
+            }) {
+                Some(Choice::Confirm) => {
+                    remove_music(ed, app);
+                    false
+                }
+                Some(Choice::Cancel) => false,
+                None => true,
+            }
+        }
+    };
+    if keep && ed.modal.is_none() {
+        ed.modal = Some(m);
+    }
+}

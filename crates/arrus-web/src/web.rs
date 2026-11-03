@@ -1,0 +1,357 @@
+//! Browser glue (wasm only): fetch, file pickers, downloads, audio, image
+//! decoding, navigation, `beforeunload`, media queries, clock.
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use arrus_api::CSRF_HEADER;
+use wasm_bindgen::JsCast as _;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    BeforeUnloadEvent, CanvasRenderingContext2d, File, FileReader, Headers, HtmlAnchorElement, HtmlAudioElement,
+    HtmlCanvasElement, HtmlImageElement, HtmlInputElement, Request, RequestCredentials, RequestInit, Response,
+};
+
+fn window() -> web_sys::Window {
+    web_sys::window().expect("no window")
+}
+
+fn document() -> web_sys::Document {
+    window().document().expect("no document")
+}
+
+pub fn js_err(e: JsValue) -> String {
+    e.as_string()
+        .or_else(|| e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())))
+        .unwrap_or_else(|| format!("{e:?}"))
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+
+pub enum Body {
+    Empty,
+    Json(String),
+    /// A browser file/blob sent as-is (never copied into wasm memory).
+    Blob(web_sys::Blob, String),
+}
+
+pub struct Resp {
+    pub status: u16,
+    pub text: String,
+}
+
+/// One same-origin request (the session cookie goes along automatically).
+/// Mutating methods carry the CSRF header.
+pub async fn fetch(method: &str, url: &str, body: Body, headers: &[(&str, String)]) -> Result<Resp, String> {
+    let init = RequestInit::new();
+    init.set_method(method);
+    init.set_credentials(RequestCredentials::SameOrigin);
+    let h = Headers::new().map_err(js_err)?;
+    if method != "GET" {
+        h.set(CSRF_HEADER, "1").map_err(js_err)?;
+    }
+    match body {
+        Body::Empty => {}
+        Body::Json(s) => {
+            h.set("Content-Type", "application/json").map_err(js_err)?;
+            init.set_body(&JsValue::from_str(&s));
+        }
+        Body::Blob(b, content_type) => {
+            if !content_type.is_empty() {
+                h.set("Content-Type", &content_type).map_err(js_err)?;
+            }
+            init.set_body(&b);
+        }
+    }
+    for (k, v) in headers {
+        h.set(k, v).map_err(js_err)?;
+    }
+    init.set_headers(&h);
+    let req = Request::new_with_str_and_init(url, &init).map_err(js_err)?;
+    let resp: Response = JsFuture::from(window().fetch_with_request(&req))
+        .await
+        .map_err(|e| format!("network error: {}", js_err(e)))?
+        .dyn_into()
+        .map_err(js_err)?;
+    let text = JsFuture::from(resp.text().map_err(js_err)?).await.map_err(js_err)?.as_string().unwrap_or_default();
+    Ok(Resp { status: resp.status(), text })
+}
+
+// ---------------------------------------------------------------------------
+// Navigation, unload guard, environment
+
+pub fn navigate(url: &str) {
+    let _ = window().location().set_href(url);
+}
+
+/// The choreography named in the URL fragment (`#c=42`), if any.
+pub fn hash_choreography() -> Option<i64> {
+    let h = window().location().hash().ok()?;
+    h.strip_prefix("#c=")?.parse().ok()
+}
+
+/// Reflect the open choreography in the URL fragment (so reload / links work).
+pub fn set_hash_choreography(id: Option<i64>) {
+    let h = id.map(|id| format!("#c={id}")).unwrap_or_default();
+    if let Ok(history) = window().history() {
+        let url = if h.is_empty() { window().location().pathname().unwrap_or_else(|_| "/".into()) } else { h };
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));
+    }
+}
+
+thread_local! {
+    static DIRTY: Cell<bool> = const { Cell::new(false) };
+    static UNLOAD_INSTALLED: Cell<bool> = const { Cell::new(false) };
+    static PICKER: RefCell<Option<HtmlInputElement>> = const { RefCell::new(None) };
+}
+
+/// Tell the `beforeunload` guard whether there are unsaved changes.
+pub fn set_unsaved(dirty: bool) {
+    DIRTY.with(|d| d.set(dirty));
+    if dirty && !UNLOAD_INSTALLED.with(|i| i.replace(true)) {
+        let handler = Closure::<dyn Fn(BeforeUnloadEvent)>::new(|e: BeforeUnloadEvent| {
+            if DIRTY.with(Cell::get) {
+                e.prevent_default();
+                e.set_return_value("You have unsaved changes.");
+            }
+        });
+        window().set_onbeforeunload(Some(handler.as_ref().unchecked_ref()));
+        handler.forget();
+    }
+}
+
+/// Phones and tablets: a coarse primary pointer.
+pub fn coarse_pointer() -> bool {
+    window().match_media("(pointer: coarse)").ok().flatten().is_some_and(|m| m.matches())
+}
+
+pub fn now_secs() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
+}
+
+/// Local date and time of a Unix timestamp, e.g. "03/11/2026, 14:05".
+pub fn local_datetime(unix: i64) -> String {
+    let d = js_sys::Date::new(&JsValue::from_f64(unix as f64 * 1000.0));
+    let opts = js_sys::Object::new();
+    for (k, v) in [("year", "numeric"), ("month", "short"), ("day", "numeric"), ("hour", "2-digit"), ("minute", "2-digit")] {
+        let _ = js_sys::Reflect::set(&opts, &k.into(), &v.into());
+    }
+    String::from(d.to_locale_string("default", &opts))
+}
+
+/// A random v4 UUID (the server replaces it anyway).
+pub fn random_uuid() -> String {
+    let mut b = [0u8; 16];
+    for x in &mut b {
+        *x = (js_sys::Math::random() * 256.0) as u8;
+    }
+    b[6] = (b[6] & 0x0F) | 0x40;
+    b[8] = (b[8] & 0x3F) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+// ---------------------------------------------------------------------------
+// Files
+
+/// Open the browser's file picker. `on_pick` runs only if files were chosen.
+pub fn pick_files(accept: &str, multiple: bool, on_pick: impl FnOnce(Vec<File>) + 'static) {
+    let doc = document();
+    // Drop a picker left over from a cancelled dialog.
+    if let Some(old) = PICKER.with(|p| p.borrow_mut().take()) {
+        old.remove();
+    }
+    let Ok(input) = doc.create_element("input").and_then(|e| e.dyn_into::<HtmlInputElement>().map_err(Into::into))
+    else {
+        return;
+    };
+    input.set_type("file");
+    input.set_accept(accept);
+    input.set_multiple(multiple);
+    let _ = input.style().set_property("display", "none");
+    if let Some(body) = doc.body() {
+        let _ = body.append_child(&input);
+    }
+    let input2 = input.clone();
+    let on_change = Closure::once_into_js(move || {
+        let mut files = Vec::new();
+        if let Some(list) = input2.files() {
+            for i in 0..list.length() {
+                if let Some(f) = list.get(i) {
+                    files.push(f);
+                }
+            }
+        }
+        input2.remove();
+        PICKER.with(|p| p.borrow_mut().take());
+        if !files.is_empty() {
+            on_pick(files);
+        }
+    });
+    input.set_onchange(Some(on_change.unchecked_ref()));
+    PICKER.with(|p| *p.borrow_mut() = Some(input.clone()));
+    input.click();
+}
+
+/// Download a same-origin URL (served with `Content-Disposition: attachment`)
+/// without leaving the page.
+pub fn download(url: &str) {
+    let doc = document();
+    if let Ok(a) = doc.create_element("a").and_then(|e| e.dyn_into::<HtmlAnchorElement>().map_err(Into::into)) {
+        a.set_href(url);
+        a.set_download("");
+        let _ = a.style().set_property("display", "none");
+        if let Some(body) = doc.body() {
+            let _ = body.append_child(&a);
+            a.click();
+            a.remove();
+        }
+    }
+}
+
+/// Read a file as a `data:` URL.
+pub fn read_data_url(file: &File, on_done: impl FnOnce(Result<String, String>) + 'static) {
+    let Ok(reader) = FileReader::new() else {
+        on_done(Err("FileReader unavailable".into()));
+        return;
+    };
+    let done = Rc::new(RefCell::new(Some(on_done)));
+    let (d1, d2) = (done.clone(), done);
+    let r1 = reader.clone();
+    let onload = Closure::once_into_js(move || {
+        if let Some(f) = d1.borrow_mut().take() {
+            f(r1.result().ok().and_then(|v| v.as_string()).ok_or_else(|| "could not read the file".to_owned()));
+        }
+    });
+    let onerror = Closure::once_into_js(move || {
+        if let Some(f) = d2.borrow_mut().take() {
+            f(Err("could not read the file".into()));
+        }
+    });
+    reader.set_onload(Some(onload.unchecked_ref()));
+    reader.set_onerror(Some(onerror.unchecked_ref()));
+    let _ = reader.read_as_data_url(file);
+}
+
+// ---------------------------------------------------------------------------
+// Images
+
+/// MIME type of base64 image data, from its first bytes.
+pub fn sniff_image_mime(b64: &str) -> &'static str {
+    if b64.starts_with("/9j/") {
+        "image/jpeg"
+    } else if b64.starts_with("R0lG") {
+        "image/gif"
+    } else if b64.starts_with("UklG") {
+        "image/webp"
+    } else {
+        "image/png"
+    }
+}
+
+/// Largest background texture side (keeps GPU memory in check on phones).
+const MAX_BG_SIDE: f64 = 2048.0;
+
+/// Decode an image URL (typically a `data:` URL) with the browser's own
+/// decoders into RGBA pixels.
+pub fn decode_image(url: &str, on_done: impl FnOnce(Result<egui::ColorImage, String>) + 'static) {
+    let Ok(img) = HtmlImageElement::new() else {
+        on_done(Err("images unavailable".into()));
+        return;
+    };
+    let done = Rc::new(RefCell::new(Some(on_done)));
+    let (d1, d2) = (done.clone(), done);
+    let img2 = img.clone();
+    let onload = Closure::once_into_js(move || {
+        let r = rasterize(&img2);
+        if let Some(f) = d1.borrow_mut().take() {
+            f(r);
+        }
+    });
+    let onerror = Closure::once_into_js(move || {
+        if let Some(f) = d2.borrow_mut().take() {
+            f(Err("the background image could not be decoded".into()));
+        }
+    });
+    img.set_onload(Some(onload.unchecked_ref()));
+    img.set_onerror(Some(onerror.unchecked_ref()));
+    img.set_src(url);
+}
+
+fn rasterize(img: &HtmlImageElement) -> Result<egui::ColorImage, String> {
+    let (w0, h0) = (img.natural_width() as f64, img.natural_height() as f64);
+    if w0 < 1.0 || h0 < 1.0 {
+        return Err("empty image".into());
+    }
+    let k = (MAX_BG_SIDE / w0.max(h0)).min(1.0);
+    let (w, h) = ((w0 * k).round().max(1.0) as u32, (h0 * k).round().max(1.0) as u32);
+    let canvas: HtmlCanvasElement =
+        document().create_element("canvas").map_err(js_err)?.dyn_into().map_err(|_| "no canvas".to_owned())?;
+    canvas.set_width(w);
+    canvas.set_height(h);
+    let ctx: CanvasRenderingContext2d = canvas
+        .get_context("2d")
+        .map_err(js_err)?
+        .ok_or("no 2d context")?
+        .dyn_into()
+        .map_err(|_| "no 2d context".to_owned())?;
+    ctx.draw_image_with_html_image_element_and_dw_and_dh(img, 0.0, 0.0, w as f64, h as f64).map_err(js_err)?;
+    let data = ctx.get_image_data(0.0, 0.0, w as f64, h as f64).map_err(js_err)?;
+    Ok(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &data.data().0))
+}
+
+// ---------------------------------------------------------------------------
+// Audio
+
+/// An `<audio>` element used as the playback clock.
+pub struct Audio {
+    el: HtmlAudioElement,
+}
+
+impl Audio {
+    pub fn new(url: &str) -> Option<Self> {
+        let el = HtmlAudioElement::new_with_src(url).ok()?;
+        el.set_preload("auto");
+        Some(Self { el })
+    }
+
+    pub fn time(&self) -> f64 {
+        self.el.current_time()
+    }
+
+    /// Track length once known.
+    pub fn duration(&self) -> Option<f64> {
+        let d = self.el.duration();
+        (d.is_finite() && d > 0.0).then_some(d)
+    }
+
+    pub fn paused(&self) -> bool {
+        self.el.paused()
+    }
+
+    pub fn play(&self) {
+        if let Ok(p) = self.el.play() {
+            // Swallow the rejection if the browser blocks playback.
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = JsFuture::from(p).await;
+            });
+        }
+    }
+
+    pub fn pause(&self) {
+        let _ = self.el.pause();
+    }
+
+    pub fn seek(&self, t: f64) {
+        self.el.set_current_time(t.max(0.0));
+    }
+}
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        let _ = self.el.pause();
+        self.el.set_src("");
+    }
+}

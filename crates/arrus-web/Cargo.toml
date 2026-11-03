@@ -1,0 +1,48 @@
+[package]
+name = "arrus-web"
+description = "Browser client for arus: view and edit ArrangeUs choreographies"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+arrus-core.workspace = true
+arrus-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Geometry, drawing and widgets. The native build only compiles the pure
+# modules (for unit tests); the app itself is web-only.
+egui = { version = "0.37", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "BeforeUnloadEvent",
+    "Blob",
+    "CanvasRenderingContext2d",
+    "Document",
+    "Element",
+    "Event",
+    "File",
+    "FileList",
+    "FileReader",
+    "Headers",
+    "History",
+    "HtmlAnchorElement",
+    "HtmlAudioElement",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlImageElement",
+    "HtmlInputElement",
+    "HtmlMediaElement",
+    "ImageData",
+    "Location",
+    "MediaQueryList",
+    "Request",
+    "RequestCredentials",
+    "RequestInit",
+    "Response",
+    "Window",
+] }
