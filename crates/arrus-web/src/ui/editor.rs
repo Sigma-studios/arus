@@ -820,18 +820,17 @@ pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
         .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
 }
 
-/// Phone layout: every tool at the bottom of the screen, in its own panel
-/// (not over the stage). The buttons wrap onto a second row instead of
-/// scrolling: a sideways swipe at the bottom edge of an iPhone switches apps.
+/// Phone layout: every tool in one row at the bottom of the screen, in its
+/// own panel (not over the stage) so swiping it scrolls the row instead of
+/// moving the stage.
 fn tool_row(ed: &mut Editor, ui: &mut Ui) {
     egui::Panel::bottom("tools")
-        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 8)))
+        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 6)))
         .show(ui, |ui| {
-            ui.spacing_mut().interact_size.y = 42.0;
-            ui.spacing_mut().button_padding = vec2(12.0, 8.0);
-            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-            {
-                ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().interact_size.y = 34.0;
+            ui.spacing_mut().button_padding = vec2(10.0, 6.0);
+            ScrollArea::horizontal().id_salt("tools_scroll").show(ui, |ui| {
+                ui.horizontal(|ui| {
                     if ui.add(egui::Button::selectable(ed.show_formations, "Formations")).clicked() {
                         ed.show_formations = !ed.show_formations;
                         // One sheet at a time: a phone has no room for both.
@@ -848,6 +847,7 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                             ed.show_inspector = !ed.show_inspector;
                             ed.show_formations &= !ed.show_inspector;
                         }
+                        ui.separator();
                         if ui.button("+ Dancer").clicked() {
                             ed.pause();
                             ed.add_dancer();
@@ -864,6 +864,7 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                         ui.toggle_value(&mut ed.multi_select, "Select")
                             .on_hover_text("Tap dancers to add or remove them; drag on empty space to select with a box");
                     }
+                    ui.separator();
                     if ui.button("Fit").clicked() {
                         ed.need_fit = true;
                     }
@@ -873,9 +874,10 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                         s.is_scene_directions_inverted = inv;
                         ed.set_settings(s, None);
                     }
+                    ui.separator();
                     widgets::fullscreen_button(ui);
                 });
-            }
+            });
         });
 }
 
