@@ -340,15 +340,16 @@ fn fmt_mark(d: f64) -> String {
 fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bounds, outer: Bounds) {
     let set = &c.settings;
     let w = stage.width();
-    // Unit screen directions of stage "front" (-y) and "stage right" (+x).
-    let front = v.vec_to_screen(P::new(0.0, -1.0)).normalized();
+    // Unit screen directions of stage "front" (+y, towards the audience) and
+    // "stage right" (+x).
+    let front = v.vec_to_screen(P::new(0.0, 1.0)).normalized();
     let right = v.vec_to_screen(P::new(1.0, 0.0)).normalized();
     let mut front_offset = 10.0;
     if set.is_distance_marks_shown {
         let size = (v.scale * 0.32).clamp(9.0, 13.0);
         for x in 0..=(w.floor() as i64) {
             let d = (x as f64 - w / 2.0).abs();
-            let pos = v.to_screen(P::new(x as f64, outer.min.y)) + front * 9.0;
+            let pos = v.to_screen(P::new(x as f64, outer.max.y)) + front * 9.0;
             painter.text(pos, Align2::CENTER_CENTER, fmt_mark(d), FontId::monospace(size), theme::TEXT_WEAK);
         }
         front_offset += 14.0;
@@ -359,8 +360,8 @@ fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bound
     let font = FontId::proportional(11.5);
     let col = theme::TEXT_FAINT;
     let mid = outer.center();
-    let audience = v.to_screen(P::new(mid.x, outer.min.y)) + front * front_offset;
-    let back = v.to_screen(P::new(mid.x, outer.max.y)) - front * 12.0;
+    let audience = v.to_screen(P::new(mid.x, outer.max.y)) + front * front_offset;
+    let back = v.to_screen(P::new(mid.x, outer.min.y)) - front * 12.0;
     painter.text(audience, Align2::CENTER_CENTER, "AUDIENCE", font.clone(), theme::TEXT_WEAK);
     painter.text(back, Align2::CENTER_CENTER, "BACKSTAGE", font.clone(), col);
     // Side labels run along the edges, reading bottom-to-top on the left side

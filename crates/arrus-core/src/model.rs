@@ -150,14 +150,14 @@ impl SceneSize {
     pub fn width(&self) -> f64 {
         self.rows as f64
     }
-    /// Stage depth in cells (along `y`, `0` = audience edge).
+    /// Stage depth in cells (along `y`, `0` = back edge, `depth` = audience edge).
     pub fn depth(&self) -> f64 {
         self.columns as f64
     }
 }
 
-/// Extra off-stage cells: `sides` on both `x` ends, `front` before `y = 0`,
-/// `back` beyond `y = depth`.
+/// Extra off-stage cells: `sides` on both `x` ends, `back` before `y = 0`,
+/// `front` (audience side) beyond `y = depth`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackstageSize {
@@ -279,7 +279,7 @@ pub struct Dancer {
 }
 
 /// Grid coordinates: `x` across the stage (grows towards stage right, the
-/// performers' right), `y` from the audience edge (`0`) to the back.
+/// performers' right), `y` from the back edge (`0`) to the audience.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub x: f64,

@@ -159,8 +159,8 @@ blank, as in the sample).
 ## Not yet confirmed (needs a richer sample)
 
 Structure is complete; these are semantics to check against a real export:
-- ✅ **`y = 0` is the audience (front) edge**, `y` grows towards the back (confirmed with `Test-v2.arrus`: dancers 1–3 moved "near the audience" → `y` 0.5–1.0)
-- ✅ **`x` spans `rows` (0–14) and `y` spans `columns` (0–8)**: the app's naming is swapped versus intuition. Dancers 8–12 at `x = 13` are on stage at the performers' right (audience's left), so **`x` grows towards stage right**. The side backstage (`sides: 2`) lies outside the stage range (x < 0 or x > rows); `back`/`front` likewise extend `y` beyond 0..columns (inferred, not yet observed)
+- **`y = 0` is the back (backstage) edge**, `y` grows towards the audience (front). Earlier notes read `Test-v2.arrus` the other way round (dancers 1–3 "near the audience" at `y` 0.5–1.0); the editor now follows this orientation
+- ✅ **`x` spans `rows` (0–14) and `y` spans `columns` (0–8)**: the app's naming is swapped versus intuition. Dancers 8–12 at `x = 13` are on stage at the performers' right (audience's left), so **`x` grows towards stage right**. The side backstage (`sides: 2`) lies outside the stage range (x < 0 or x > rows); `back` extends `y` below 0 and `front` beyond `columns` (inferred, not yet observed)
 - `settings.isSceneDirectionsInverted` probably mirrors this orientation in the app's view
 - props are a premium feature, so no sample: best guesses are `width` along x, `length` along y, `height` vertical (3D only), `rotationAngle` in radians (Flutter convention), `alpha` 0–1
 - prop `rotationAngle` units, `alpha` range, and `width`/`length`/`height` axes

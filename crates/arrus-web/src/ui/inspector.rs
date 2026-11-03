@@ -141,7 +141,7 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
         }
     });
     ui.label(
-        RichText::new("x runs across the stage (towards stage right), y from the audience edge (0) to the back.")
+        RichText::new("x runs across the stage (towards stage right), y from the back edge (0) to the audience.")
             .small()
             .color(theme::TEXT_FAINT),
     );
@@ -310,7 +310,7 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings) -> bool {
     cb(ui, &mut s.is_subdivisions_shown, "Half-cell lines", "");
     cb(ui, &mut s.is_distance_marks_shown, "Distance marks", "Cell numbers along the front edge, counted from the centre line");
     cb(ui, &mut s.is_scene_directions_shown, "Stage directions", "AUDIENCE / BACKSTAGE / STAGE LEFT / STAGE RIGHT");
-    cb(ui, &mut s.is_scene_directions_inverted, "View from audience", "Rotate the stage 180°");
+    cb(ui, &mut s.is_scene_directions_inverted, "View from backstage", "Rotate the stage 180°");
     cb(ui, &mut s.is_backstage_shown, "Backstage", "Show the off-stage area around the stage");
     cb(ui, &mut s.is_dancer_names_shown, "Dancer names", "");
     cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Small numbers next to dancers whose label is not their number");
@@ -434,7 +434,7 @@ fn settings(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
             grid_changed = Some("rows");
         }
         ui.end_row();
-        ui.label("Depth (y)").on_hover_text("Cells from the audience edge to the back (the app calls these columns)");
+        ui.label("Depth (y)").on_hover_text("Cells from the back edge to the audience (the app calls these columns)");
         if ui.add(egui::DragValue::new(&mut g.columns).range(1..=200).suffix(" cells")).changed() {
             grid_changed = Some("cols");
         }

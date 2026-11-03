@@ -1,5 +1,5 @@
 //! Stage <-> screen transform: zoom, pan, fit, and the 180° "view from
-//! audience" rotation. Screen coordinates are egui points.
+//! backstage" rotation. Screen coordinates are egui points.
 
 use egui::{Pos2, Rect, Vec2, vec2};
 
@@ -11,7 +11,7 @@ pub struct View {
     pub center: P,
     /// Screen points per cell.
     pub scale: f32,
-    /// Rotated 180°: audience edge at the bottom, x to the left.
+    /// Rotated 180°: audience edge at the top, x to the left.
     pub inverted: bool,
     pub screen_center: Pos2,
 }
@@ -117,13 +117,13 @@ mod tests {
     }
 
     #[test]
-    fn default_orientation_puts_audience_on_top() {
+    fn default_orientation_puts_audience_at_bottom() {
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 800.0));
         let v = View::fit(rect, stage(), 0.0, false);
         assert_eq!(v.scale, 100.0);
         assert_eq!(v.to_screen(P::new(0.0, 0.0)), pos2(0.0, 0.0));
         assert_eq!(v.to_screen(P::new(14.0, 8.0)), pos2(1400.0, 800.0));
-        // y = 0 (audience) is above y = 8.
+        // y = 0 (backstage) is above y = 8 (audience).
         assert!(v.to_screen(P::new(7.0, 0.0)).y < v.to_screen(P::new(7.0, 8.0)).y);
     }
 

@@ -383,8 +383,8 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
             }
             ui.separator();
             let mut inv = ed.doc.settings.is_scene_directions_inverted;
-            let label = if ed.compact { "Audience view" } else { "View from audience" };
-            if ui.toggle_value(&mut inv, label).on_hover_text("Rotate the stage 180°: audience at the bottom").changed() {
+            let label = if ed.compact { "Backstage view" } else { "View from backstage" };
+            if ui.toggle_value(&mut inv, label).on_hover_text("Rotate the stage 180°: audience at the top").changed() {
                 let mut s = ed.doc.settings.clone();
                 s.is_scene_directions_inverted = inv;
                 ed.set_settings(s, None);

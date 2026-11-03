@@ -52,15 +52,15 @@ pub fn stage_bounds(c: &Choreography) -> Bounds {
     Bounds::new(P::new(0.0, 0.0), P::new(c.grid_size.width().max(1.0), c.grid_size.depth().max(1.0)))
 }
 
-/// Stage plus backstage: `sides` beyond both x ends, `front` before y = 0,
-/// `back` beyond y = columns.
+/// Stage plus backstage: `sides` beyond both x ends, `back` before y = 0,
+/// `front` (audience side) beyond y = columns.
 pub fn drawable_bounds(c: &Choreography) -> Bounds {
     let s = stage_bounds(c);
     let b = &c.grid_size.backstage;
     let sides = b.sides.max(0) as f64;
     Bounds::new(
-        P::new(-sides, -(b.front.max(0) as f64)),
-        P::new(s.max.x + sides, s.max.y + b.back.max(0) as f64),
+        P::new(-sides, -(b.back.max(0) as f64)),
+        P::new(s.max.x + sides, s.max.y + b.front.max(0) as f64),
     )
 }
 
@@ -85,8 +85,8 @@ pub const SNAP_STEP: f64 = 0.5;
 pub const ROTATION_SNAP_DEG: f64 = 15.0;
 
 /// Outline of a dancer shape, in "unit" coordinates: the shape fits the circle
-/// of radius 1 around the origin, `-y` points towards the audience (up in the
-/// default view). `None` = a circle.
+/// of radius 1 around the origin, `-y` points up in the default view (towards
+/// the backstage). `None` = a circle.
 pub fn dancer_shape_outline(shape: DancerShape) -> Option<Vec<P>> {
     use DancerShape::*;
     let s = 0.82; // half side of the squares, so they look as heavy as the circle
@@ -309,12 +309,12 @@ mod tests {
         c.grid_size.backstage.front = 1;
         c.grid_size.backstage.back = 3;
         let d = drawable_bounds(&c);
-        assert_eq!(d.min, P::new(-2.0, -1.0));
-        assert_eq!(d.max, P::new(16.0, 11.0));
+        assert_eq!(d.min, P::new(-2.0, -3.0));
+        assert_eq!(d.max, P::new(16.0, 9.0));
         assert!(!anyone_backstage(&c));
         c.add_dancer(arrus_core::Unit::at(-1.0, 2.0));
         assert!(anyone_backstage(&c));
-        assert_eq!(d.clamp(P::new(-9.0, 20.0)), P::new(-2.0, 11.0));
+        assert_eq!(d.clamp(P::new(-9.0, 20.0)), P::new(-2.0, 9.0));
     }
 
     #[test]
