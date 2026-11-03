@@ -97,8 +97,36 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
 }
 
 /// Phone layout: one slim row of transport, time and formation, then a thin
-/// timeline. Music is managed on a computer.
+/// timeline. Music is managed on a computer. While a sheet (formations or
+/// details) is open, only previous / formation / next are kept.
 fn show_compact(ed: &mut Editor, ui: &mut Ui) {
+    if ed.show_formations || ed.show_inspector {
+        egui::Panel::bottom("timeline")
+            .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(10, 5)))
+            .show(ui, |ui| {
+                ui.spacing_mut().interact_size.y = 30.0;
+                ui.spacing_mut().button_padding = vec2(6.0, 4.0);
+                ui.horizontal(|ui| {
+                    let size = vec2(44.0, 30.0);
+                    if transport_button(ui, size, Icon::Prev, None).clicked() {
+                        ed.prev_formation();
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if transport_button(ui, size, Icon::Next, None).clicked() {
+                            ed.next_formation();
+                        }
+                        // Playback started before opening the sheet can still be stopped.
+                        if ed.playing && transport_button(ui, size, Icon::Pause, Some(theme::ACCENT)).clicked() {
+                            ed.toggle_play();
+                        }
+                        ui.centered_and_justified(|ui| {
+                            ui.add(egui::Label::new(RichText::new(formation_label(ed)).size(13.5)).truncate());
+                        });
+                    });
+                });
+            });
+        return;
+    }
     egui::Panel::bottom("timeline")
         .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(10, 6)))
         .show(ui, |ui| {

@@ -488,7 +488,12 @@ impl eframe::App for App {
             return;
         }
 
-        self.top_bar(ui);
+        // Phones: the editor's own bar (with its back button) is enough; the
+        // app header would only take room from the stage.
+        let in_phone_editor = self.compact && self.screen == Screen::Editor && self.editor.is_some();
+        if !in_phone_editor {
+            self.top_bar(ui);
+        }
         match self.screen {
             Screen::Library => library::show(self, ui),
             Screen::Admin => admin::show(self, ui),
