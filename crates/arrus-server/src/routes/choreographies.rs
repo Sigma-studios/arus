@@ -4,8 +4,8 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use arrus_api::{
-    ChoreographyDoc, ChoreographySummary, Conflict, CreateChoreography, LiveEvent, MAX_SESSION_LEN, PatchChoreography,
-    SaveChoreography, Saved, Viewer, patch as jpatch,
+    ChoreographyDoc, ChoreographySummary, Conflict, CreateChoreography, LiveEvent, MAX_PRESENCE_SELECTED, MAX_SESSION_LEN,
+    PatchChoreography, PresenceUpdate, SaveChoreography, Saved, Viewer, patch as jpatch,
 };
 use arrus_core::Choreography;
 use axum::Json;
@@ -249,6 +249,26 @@ pub async fn patch(
         .await
 }
 
+/// Where an editor session is (formation, selected dancers): passed on to
+/// everyone viewing. 404 if that session has no live stream open.
+pub async fn presence(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<i64>,
+    ApiJson(body): ApiJson<PresenceUpdate>,
+) -> Result<StatusCode> {
+    if body.session.is_empty() || body.session.len() > MAX_SESSION_LEN || body.selected.len() > MAX_PRESENCE_SELECTED {
+        return Err(Error::bad_request("bad presence update"));
+    }
+    let user = auth.user.clone();
+    state.db(move |_, conn| readable(conn, &user, id).map(|_| ())).await?;
+    let mine = state.hub.viewers(id).iter().any(|v| v.session == body.session && v.username == auth.user.username());
+    if !mine || !state.hub.update(id, &body) {
+        return Err(Error::not_found());
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 pub struct LiveQuery {
     session: String,
@@ -271,7 +291,7 @@ pub async fn live(
     let user = auth.user.clone();
     let meta = state.db(move |_, conn| readable(conn, &user, id)).await?;
     let can_write = auth.user.check_write(meta.team_id).is_ok();
-    let viewer = Viewer { session: q.session.clone(), username: auth.user.username(), can_write };
+    let viewer = Viewer { session: q.session.clone(), username: auth.user.username(), can_write, ..Default::default() };
     // Subscribe before reading the revision, so no change falls in between.
     let (conn, rx) = state.hub.join(id, viewer);
     let leave = crate::live::Leave { state: state.clone(), id, conn };

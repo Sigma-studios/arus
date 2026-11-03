@@ -36,6 +36,16 @@ pub struct Scene<'a> {
     pub playing: bool,
     /// Outlines of the next formation (a per-screen view option).
     pub next_outlines: bool,
+    /// Dancers other people (on this formation) have selected or are moving.
+    pub remotes: &'a [Remote],
+}
+
+/// Someone else's selection, drawn as a ring in their colour.
+pub struct Remote {
+    pub color: Color32,
+    pub name: String,
+    pub dancers: Vec<usize>,
+    pub dragging: bool,
 }
 
 /// Screen distance between a prop's front edge and its rotation handle.
@@ -241,6 +251,25 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
             let r = Align2::CENTER_TOP.anchor_size(pos, galley.size()).expand2(vec2(3.0, 0.0));
             painter.rect_filled(r, 3.0, Color32::from_black_alpha((120.0 * op) as u8));
             painter.galley(r.min + vec2(3.0, 0.0), galley, theme::TEXT.gamma_multiply(op));
+        }
+    }
+
+    // Other people's selections: a ring in their colour, their name on the first.
+    for (k, r) in s.remotes.iter().enumerate() {
+        let ring = rpx + 5.0 + 3.5 * k as f32;
+        let stroke = Stroke::new(if r.dragging { 3.5 } else { 2.0 }, r.color);
+        let mut first = None;
+        for d in s.dancers.iter().filter(|d| r.dancers.contains(&d.index)) {
+            let c = v.to_screen(d.position);
+            painter.circle_stroke(c, ring, stroke);
+            first.get_or_insert(c);
+        }
+        if let Some(c) = first {
+            let galley = painter.layout_no_wrap(r.name.clone(), FontId::proportional(11.5), Color32::WHITE);
+            let at = c + vec2(ring * 0.7, -ring * 0.7);
+            let rect = Align2::LEFT_BOTTOM.anchor_size(at, galley.size()).expand2(vec2(4.0, 1.5));
+            painter.rect_filled(rect, 4.0, r.color);
+            painter.galley(rect.min + vec2(4.0, 1.5), galley, Color32::WHITE);
         }
     }
 }

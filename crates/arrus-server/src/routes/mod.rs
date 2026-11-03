@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/choreographies/{id}/patch", post(choreographies::patch))
         .route("/choreographies/{id}/live", get(choreographies::live))
+        .route("/choreographies/{id}/presence", post(choreographies::presence))
         .route("/choreographies/{id}/export", get(transfer::export))
         .route("/choreographies/{id}/pdf", get(transfer::pdf))
         .route("/choreographies/{id}/music", get(music::get).put(music::put).delete(music::delete))

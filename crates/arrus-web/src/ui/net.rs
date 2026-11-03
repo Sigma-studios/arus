@@ -141,6 +141,13 @@ pub async fn send<B: Serialize, T: DeserializeOwned>(method: &str, url: &str, bo
     parse(&call(method, url, Body::Json(json), &[]).await?)
 }
 
+/// Send JSON, ignore the (204) response.
+pub async fn send_empty_json<B: Serialize>(method: &str, url: &str, body: &B) -> ApiResult<()> {
+    let json = serde_json::to_string(body)
+        .map_err(|e| ApiError::Http { status: 0, message: format!("Could not encode: {e}"), code: None })?;
+    call(method, url, Body::Json(json), &[]).await.map(|_| ())
+}
+
 /// A request whose response body is ignored (204s, logout).
 pub async fn send_empty(method: &str, url: &str) -> ApiResult<()> {
     call(method, url, Body::Empty, &[]).await.map(|_| ())

@@ -33,6 +33,7 @@
 //! | DELETE | `/api/choreographies/{id}` | | 204 (and its music) | writers |
 //! | POST | `/api/choreographies/{id}/patch` | [`PatchChoreography`] | [`Saved`] | writers |
 //! | GET  | `/api/choreographies/{id}/live?session={s}` | | `text/event-stream` of [`LiveEvent`] JSON | team readers |
+//! | POST | `/api/choreographies/{id}/presence` | [`PresenceUpdate`] | 204 | team readers |
 //! | GET  | `/api/choreographies/{id}/export` | | `.arrus` bytes (`Content-Disposition: attachment`) | team readers |
 //! | GET  | `/api/choreographies/{id}/pdf` | | PDF, one page per formation (`Content-Disposition: attachment`) | team readers |
 //! | POST | `/api/teams/{id}/import` | raw `.arrus` / `.aubkp` bytes, header `X-Filename` | [`ImportResult`] | writers of that team |
@@ -203,13 +204,37 @@ pub struct PatchChoreography {
     pub ops: Vec<PatchOp>,
 }
 
-/// Someone with the choreography open.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Someone with the choreography open, and where they are in it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Viewer {
     pub session: String,
     pub username: String,
     pub can_write: bool,
+    /// The formation they are on (index), once they said so.
+    #[serde(default)]
+    pub formation: Option<usize>,
+    /// The dancers (indexes) they have selected.
+    #[serde(default)]
+    pub selected: Vec<usize>,
+    /// They are dragging the selected dancers right now.
+    #[serde(default)]
+    pub dragging: bool,
 }
+
+/// Where an editor session is: sent when it changes (a few times a second at
+/// most); everyone gets the new [`LiveEvent::Presence`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PresenceUpdate {
+    pub session: String,
+    pub formation: Option<usize>,
+    #[serde(default)]
+    pub selected: Vec<usize>,
+    #[serde(default)]
+    pub dragging: bool,
+}
+
+/// Most selected dancers reported in a [`PresenceUpdate`].
+pub const MAX_PRESENCE_SELECTED: usize = 500;
 
 /// Longest editor session id accepted.
 pub const MAX_SESSION_LEN: usize = 64;

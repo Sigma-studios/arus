@@ -80,6 +80,27 @@ impl Hub {
         }
     }
 
+    /// Update where a session is (all its streams); everyone gets the new
+    /// presence list if anything changed. Returns whether the session is here.
+    pub fn update(&self, id: i64, u: &arrus_api::PresenceUpdate) -> bool {
+        let mut rooms = self.rooms();
+        let Some(room) = rooms.get_mut(&id) else { return false };
+        let mut found = false;
+        let mut changed = false;
+        for (_, v) in room.conns.iter_mut().filter(|(_, v)| v.session == u.session) {
+            found = true;
+            let next = (u.formation, u.selected.clone(), u.dragging);
+            if (v.formation, v.selected.clone(), v.dragging) != next {
+                (v.formation, v.selected, v.dragging) = next;
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = room.tx.send(encode(&LiveEvent::Presence { viewers: room.viewers() }));
+        }
+        found
+    }
+
     pub fn viewers(&self, id: i64) -> Vec<Viewer> {
         self.rooms().get(&id).map(Room::viewers).unwrap_or_default()
     }
@@ -103,7 +124,7 @@ mod tests {
     use super::*;
 
     fn viewer(s: &str) -> Viewer {
-        Viewer { session: s.into(), username: format!("user-{s}"), can_write: true }
+        Viewer { session: s.into(), username: format!("user-{s}"), can_write: true, ..Default::default() }
     }
 
     #[tokio::test]
@@ -128,6 +149,16 @@ mod tests {
         assert_eq!(hub.viewers(1), vec![viewer("a"), viewer("b")]);
         hub.leave(1, a_conn);
         assert_eq!(hub.viewers(1), vec![viewer("b")]);
+        // Where b is: announced once (skip the presence lists queued so far).
+        while b.try_recv().is_ok() {}
+        let u = arrus_api::PresenceUpdate { session: "b".into(), formation: Some(3), selected: vec![1, 4], dragging: true };
+        assert!(hub.update(1, &u));
+        let ev: LiveEvent = serde_json::from_str(&b.recv().await.unwrap()).unwrap();
+        let LiveEvent::Presence { viewers } = ev else { panic!("{ev:?}") };
+        assert_eq!((viewers[0].formation, viewers[0].selected.clone(), viewers[0].dragging), (Some(3), vec![1, 4], true));
+        assert!(hub.update(1, &u), "unchanged: nothing sent");
+        assert!(b.try_recv().is_err());
+        assert!(!hub.update(1, &arrus_api::PresenceUpdate { session: "zz".into(), ..Default::default() }));
         hub.leave(1, b2_conn);
         assert!(hub.viewers(1).is_empty());
     }

@@ -49,7 +49,14 @@ pub fn presence(ui: &mut Ui, others: &[&arrus_api::Viewer], max: usize) {
         p.circle_stroke(r.center(), 12.5, Stroke::new(1.5, theme::PANEL));
         let initial: String = v.username.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
         p.text(r.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(13.0), Color32::WHITE);
-        resp.on_hover_text(format!("{} · {}", v.username, if v.can_write { "editing" } else { "viewing" }));
+        let doing = if v.can_write { "editing" } else { "viewing" };
+        let at = v.formation.map(|f| format!(" · formation {}", f + 1)).unwrap_or_default();
+        let holding = match v.selected.len() {
+            0 => String::new(),
+            n if v.dragging => format!(" · moving {n} dancer{}", if n == 1 { "" } else { "s" }),
+            n => format!(" · {n} dancer{} selected", if n == 1 { "" } else { "s" }),
+        };
+        resp.on_hover_text(format!("{} · {doing}{at}{holding}", v.username));
     }
     ui.spacing_mut().item_spacing.x = 8.0;
 }

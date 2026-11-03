@@ -223,6 +223,8 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
     let spans = timeline::spans(&ed.doc);
     let cur = ed.cur();
     let inner = rect.shrink2(vec2(0.0, 4.0));
+    let others: Vec<(usize, Color32)> =
+        ed.live.others().iter().filter_map(|v| Some((v.formation?, theme::person_color(&v.username)))).collect();
     for s in &spans {
         let x0 = time_to_x(s.start, len, rect);
         let x1 = time_to_x(s.hold_start, len, rect);
@@ -247,6 +249,12 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
             p.rect_filled(hr, 4.0, if selected { theme::HOLD_CURRENT } else { theme::HOLD });
             if selected {
                 p.rect_stroke(hr, 4.0, Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
+            }
+            // Where the others are.
+            for (k, (_, color)) in others.iter().filter(|o| o.0 == s.formation).enumerate() {
+                let c = pos2((hr.right() - 6.0 - 9.0 * k as f32).max(hr.left() + 4.0), hr.top() + 6.0);
+                p.circle_filled(c, 4.0, *color);
+                p.circle_stroke(c, 4.0, Stroke::new(1.0, theme::BG));
             }
             let f = &ed.doc.formations[s.formation];
             let stripe = Rect::from_min_max(pos2(hr.left() + 2.0, hr.bottom() - 3.0), pos2(hr.right() - 2.0, hr.bottom() - 1.0));

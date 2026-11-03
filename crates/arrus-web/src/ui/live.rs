@@ -13,11 +13,12 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use arrus_api::patch::{self, IMAGE_PATH, PatchOp};
-use arrus_api::{ChoreographyDoc, ChoreographyId, LiveEvent, PatchChoreography, Saved, Viewer};
+use arrus_api::{ChoreographyDoc, ChoreographyId, LiveEvent, PatchChoreography, PresenceUpdate, Saved, Viewer};
 use arrus_core::Choreography;
 use serde_json::Value;
 
 use super::editor::Editor;
+use super::stage::Drag;
 use super::{ApiError, App, net};
 use crate::web;
 
@@ -25,6 +26,8 @@ use crate::web;
 const DEBOUNCE: f64 = 0.25;
 /// …but during a continuous change (a drag) send at least this often.
 const MAX_DELAY: f64 = 0.5;
+/// Where we are (formation, selection) is reported at most this often.
+const PRESENCE_EVERY: f64 = 0.15;
 
 struct Batch {
     id: u64,
@@ -60,6 +63,12 @@ pub struct Live {
     /// Other people's changes, in order. Undo snapshots replay the ones made
     /// after them, so undo only takes back your own changes.
     pub remote_log: Vec<Rc<Vec<PatchOp>>>,
+    /// The live stream said hello (so the server knows this session).
+    connected: bool,
+    /// Where we last told the others we are.
+    presence_sent: Option<PresenceUpdate>,
+    presence_at: f64,
+    presence_busy: bool,
 }
 
 fn value_of(doc: &Choreography) -> Value {
@@ -97,6 +106,10 @@ impl Live {
             stream_dead_since: None,
             resyncing: false,
             remote_log: Vec::new(),
+            connected: false,
+            presence_sent: None,
+            presence_at: 0.0,
+            presence_busy: false,
         }
     }
 
@@ -209,6 +222,7 @@ pub fn sync(ed: &mut Editor, app: &mut App) {
     let id = ed.summary.id;
     let now = ed.now;
     open_stream(ed, app, id, now);
+    send_presence(ed, app, id, now);
     if ed.live.changed && (now - ed.live.last_change >= DEBOUNCE || now - ed.live.last_collect >= MAX_DELAY) {
         ed.collect();
     }
@@ -226,6 +240,39 @@ pub fn sync(ed: &mut Editor, app: &mut App) {
     app.net.spawn(async move {
         let r = net::send::<_, Saved>("POST", &format!("/api/choreographies/{id}/patch"), &body).await;
         move |app: &mut App| on_sent(app, id, batch, r)
+    });
+}
+
+/// Tell the others which formation we are on and which dancers we hold.
+fn send_presence(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
+    let here = PresenceUpdate {
+        session: ed.live.session.clone(),
+        formation: Some(ed.cur()),
+        selected: ed.sel.dancers().map(|s| s.iter().copied().collect()).unwrap_or_default(),
+        dragging: matches!(ed.drag, Some(Drag::Dancers { moved: true, .. })),
+    };
+    let live = &mut ed.live;
+    if !live.connected || live.presence_sent.as_ref() == Some(&here) {
+        return;
+    }
+    if live.presence_busy || now - live.presence_at < PRESENCE_EVERY {
+        app.net.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+        return;
+    }
+    live.presence_busy = true;
+    live.presence_at = now;
+    live.presence_sent = Some(here.clone());
+    app.net.spawn(async move {
+        let r = net::send_empty_json("POST", &format!("/api/choreographies/{id}/presence"), &here).await;
+        move |app: &mut App| {
+            if let Some(ed) = editor_for(app, id) {
+                ed.live.presence_busy = false;
+                if r.is_err() {
+                    // Not registered yet (reconnecting): try again later.
+                    ed.live.presence_sent = None;
+                }
+            }
+        }
     });
 }
 
@@ -288,6 +335,7 @@ fn open_stream(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
                         ed.live.stream_dead_since = Some(now);
                     }
                     ed.live.viewers.clear();
+                    ed.live.connected = false;
                 }
             })
         },
@@ -312,7 +360,12 @@ fn on_event(app: &mut App, id: ChoreographyId, text: &str) {
 /// Returns whether the document must be reloaded.
 fn apply_event(ed: &mut Editor, ev: LiveEvent) -> bool {
     match ev {
-        LiveEvent::Hello { revision } => return revision != ed.live.server_rev,
+        LiveEvent::Hello { revision } => {
+            // A new stream: the server knows nothing of where we are yet.
+            ed.live.connected = true;
+            ed.live.presence_sent = None;
+            return revision != ed.live.server_rev;
+        }
         LiveEvent::Presence { viewers } => ed.live.viewers = viewers,
         LiveEvent::Patch { revision, session, batch, by, ops } => {
             if revision <= ed.live.server_rev {

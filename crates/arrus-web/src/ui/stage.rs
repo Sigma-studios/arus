@@ -323,6 +323,19 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     // Redo the display after edits this frame so drags feel immediate.
     let dancers = timeline::dancers_at(&ed.doc, ed.t, ed.easing);
     let shown_props = edit::props_at(&ed.doc, ed.t, ed.easing);
+    let here = ed.cur();
+    let remotes: Vec<paint::Remote> = ed
+        .live
+        .others()
+        .iter()
+        .filter(|v| v.formation == Some(here) && !v.selected.is_empty())
+        .map(|v| paint::Remote {
+            color: theme::person_color(&v.username),
+            name: v.username.clone(),
+            dancers: v.selected.clone(),
+            dragging: v.dragging,
+        })
+        .collect();
     let scene = Scene {
         c: &ed.doc,
         view: &view,
@@ -336,6 +349,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
         handles: editing,
         playing: ed.playing,
         next_outlines: ed.show_next,
+        remotes: &remotes,
     };
     paint::paint_stage(&painter, &scene);
 

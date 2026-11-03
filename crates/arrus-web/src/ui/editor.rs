@@ -872,6 +872,13 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
     let row_h = if ed.compact { 44.0 } else { 32.0 };
     let list_h = (ui.available_height() * if ed.can_edit { 0.45 } else { 0.6 }).max(120.0);
     let mut go = None;
+    // Who else is on which formation (a dot in their colour).
+    let others: Vec<(usize, egui::Color32, String)> = ed
+        .live
+        .others()
+        .iter()
+        .filter_map(|v| Some((v.formation?, theme::person_color(&v.username), v.username.clone())))
+        .collect();
     ScrollArea::vertical().id_salt("formation_list").max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
         for i in 0..n {
             let f = &ed.doc.formations[i];
@@ -911,6 +918,18 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
             if !f.comments.is_empty() {
                 p.circle_filled(rect.right_top() + vec2(-6.0, 7.0), 3.0, theme::SELECT);
             }
+            let here: Vec<&(usize, egui::Color32, String)> = others.iter().filter(|o| o.0 == i).collect();
+            for (k, (_, color, _)) in here.iter().enumerate() {
+                let c = egui::pos2(right.left() - 10.0 - 12.0 * k as f32, rect.center().y);
+                p.circle_filled(c, 5.0, *color);
+                p.circle_stroke(c, 5.0, egui::Stroke::new(1.0, theme::PANEL));
+            }
+            let resp = if here.is_empty() {
+                resp
+            } else {
+                let names: Vec<&str> = here.iter().map(|o| o.2.as_str()).collect();
+                resp.on_hover_text(format!("Here: {}", names.join(", ")))
+            };
             let resp = if f.comments.is_empty() {
                 resp
             } else {

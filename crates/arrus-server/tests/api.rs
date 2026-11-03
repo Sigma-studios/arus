@@ -875,10 +875,26 @@ async fn live_patches_merge_and_stream() {
     assert_eq!(next_live(&mut live).await, LiveEvent::Hello { revision: 1 });
     match next_live(&mut live).await {
         LiveEvent::Presence { viewers } => {
-            assert_eq!(viewers, vec![Viewer { session: "reader-1".into(), username: "r".into(), can_write: false }]);
+            assert_eq!(
+                viewers,
+                vec![Viewer { session: "reader-1".into(), username: "r".into(), can_write: false, ..Default::default() }]
+            );
         }
         e => panic!("{e:?}"),
     }
+
+    // The reader says where it is; everyone (itself included) hears it.
+    let here = PresenceUpdate { session: "reader-1".into(), formation: Some(1), selected: vec![0, 2], dragging: false };
+    assert_eq!(t.call(Method::POST, &format!("{url}/presence"), Some(&r), Some(&here)).await.status, StatusCode::NO_CONTENT);
+    match next_live(&mut live).await {
+        LiveEvent::Presence { viewers } => assert_eq!((viewers[0].formation, viewers[0].selected.clone()), (Some(1), vec![0, 2])),
+        e => panic!("{e:?}"),
+    }
+    // Not someone else's session, and not without a live stream.
+    let theirs = t.call(Method::POST, &format!("{url}/presence"), Some(&w), Some(&here)).await;
+    assert_eq!(theirs.status, StatusCode::NOT_FOUND);
+    let none = PresenceUpdate { session: "nobody".into(), ..Default::default() };
+    assert_eq!(t.call(Method::POST, &format!("{url}/presence"), Some(&w), Some(&none)).await.status, StatusCode::NOT_FOUND);
 
     // Two writers change different things from the same starting point: both survive.
     let mut a = base.clone();
