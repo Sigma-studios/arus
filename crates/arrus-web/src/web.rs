@@ -144,6 +144,53 @@ pub fn coarse_pointer() -> bool {
     window().match_media("(pointer: coarse)").ok().flatten().is_some_and(|m| m.matches())
 }
 
+/// Call the first of `names` that `target` has as a method; swallow the
+/// promise rejection a refused fullscreen request returns.
+fn call_first(target: &JsValue, names: &[&str]) {
+    for name in names {
+        let Ok(f) = js_sys::Reflect::get(target, &JsValue::from_str(name)) else { continue };
+        let Some(f) = f.dyn_ref::<js_sys::Function>() else { continue };
+        if let Ok(r) = f.call0(target)
+            && let Ok(p) = r.dyn_into::<js_sys::Promise>()
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = JsFuture::from(p).await;
+            });
+        }
+        return;
+    }
+}
+
+fn doc_flag(names: &[&str]) -> bool {
+    let d: JsValue = document().into();
+    names.iter().any(|n| js_sys::Reflect::get(&d, &JsValue::from_str(n)).is_ok_and(|v| v.is_truthy()))
+}
+
+/// Whether the page may go fullscreen (Android, desktop; not iPhone Safari).
+pub fn fullscreen_supported() -> bool {
+    doc_flag(&["fullscreenEnabled", "webkitFullscreenEnabled"])
+}
+
+pub fn is_fullscreen() -> bool {
+    doc_flag(&["fullscreenElement", "webkitFullscreenElement"])
+}
+
+/// Enter or leave fullscreen. Must run from a tap/click.
+pub fn toggle_fullscreen() {
+    if is_fullscreen() {
+        call_first(&document().into(), &["exitFullscreen", "webkitExitFullscreen"]);
+    } else if let Some(el) = document().document_element() {
+        call_first(&el.into(), &["requestFullscreen", "webkitRequestFullscreen"]);
+    }
+}
+
+/// Opened from the home screen as an app (no browser bars to hide).
+pub fn standalone() -> bool {
+    let media = window().match_media("(display-mode: standalone)").ok().flatten().is_some_and(|m| m.matches());
+    let ios = js_sys::Reflect::get(&window().navigator().into(), &JsValue::from_str("standalone")).is_ok_and(|v| v.is_truthy());
+    media || ios
+}
+
 pub fn now_secs() -> i64 {
     (js_sys::Date::now() / 1000.0) as i64
 }

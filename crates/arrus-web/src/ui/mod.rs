@@ -305,6 +305,7 @@ impl App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if compact {
                             self.user_menu(ui);
+                            widgets::fullscreen_button(ui);
                             return;
                         }
                         if ui.button("Log out").clicked() {
@@ -338,7 +339,7 @@ impl App {
             ui.label(RichText::new(&me.username).strong());
             let role = match (me.role, me.can_write) {
                 (Role::Admin, _) => "Admin",
-                (_, true) => "Member (can edit on a computer)",
+                (_, true) => "Member (can edit)",
                 (_, false) => "Viewer",
             };
             ui.label(RichText::new(role).small().color(theme::TEXT_WEAK));

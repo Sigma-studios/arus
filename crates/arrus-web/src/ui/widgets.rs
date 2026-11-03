@@ -4,6 +4,31 @@ use egui::{Color32, CornerRadius, Id, Margin, Response, RichText, Stroke, Ui, Ve
 
 use crate::theme;
 
+/// Phones: hide the browser bars. Real fullscreen where the browser allows
+/// it; otherwise (iPhone) how to open arus from the home screen instead.
+/// Nothing when already running as a home-screen app.
+pub fn fullscreen_button(ui: &mut Ui) {
+    if crate::web::standalone() {
+        return;
+    }
+    if crate::web::fullscreen_supported() {
+        let on = crate::web::is_fullscreen();
+        if ui.add(egui::Button::selectable(on, "Fullscreen")).clicked() {
+            crate::web::toggle_fullscreen();
+        }
+    } else {
+        ui.menu_button("Fullscreen", |ui| {
+            ui.set_max_width(260.0);
+            ui.label(RichText::new("Fullscreen on iPhone").strong());
+            ui.label("Safari doesn't let websites hide its bars. Open arus as an app instead:");
+            ui.label("1. Tap the Share button");
+            ui.label("2. Choose “Add to Home Screen”");
+            ui.label("3. Open arus from the new icon");
+            ui.label(RichText::new("It then runs without the address bar. You log in once in the app.").small().color(theme::TEXT_WEAK));
+        });
+    }
+}
+
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).color(Color32::WHITE).strong()).fill(theme::primary_fill()))
 }

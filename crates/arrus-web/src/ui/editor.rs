@@ -874,6 +874,8 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                         s.is_scene_directions_inverted = inv;
                         ed.set_settings(s, None);
                     }
+                    ui.separator();
+                    widgets::fullscreen_button(ui);
                 });
             });
         });
