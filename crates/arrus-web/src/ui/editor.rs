@@ -1,17 +1,17 @@
-//! The choreography editor: state, playback clock, saving, music, keyboard,
+//! The choreography editor: state, playback clock, music, keyboard,
 //! toolbar, formation list and dialogs. The stage, inspector and timeline
 //! live in their own modules.
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use arrus_api::{ChoreographyDoc, ChoreographyId, ChoreographySummary, Conflict, CreateChoreography, SaveChoreography, Saved};
+use arrus_api::{ChoreographyDoc, ChoreographyId, ChoreographySummary};
 use arrus_core::timeline::{self, Easing};
 use arrus_core::{Choreography, Comment, StageBackground, StageBackgroundFile};
 use egui::{Align, Event, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, Sense, Ui, vec2};
 
 use super::widgets::{self, Choice};
-use super::{App, ApiError, Net, Screen, inspector, net, stage, timeline as timeline_ui};
+use super::{App, Net, Screen, inspector, live, net, stage, timeline as timeline_ui};
 use crate::edit::{self, Selection};
 use crate::geom::{self, P};
 use crate::undo::{UNDO_LIMIT, UndoStack};
@@ -24,11 +24,12 @@ use crate::{theme, util};
 pub struct Snap {
     doc: Choreography,
     bg: Option<Rc<String>>,
+    /// How many of other people's changes it already has (see `live::Live::remote_log`).
+    seq: usize,
 }
 
 pub enum EdModal {
     RemoveDancers(BTreeSet<usize>),
-    Conflict(Conflict),
     RemoveMusic,
 }
 
@@ -42,8 +43,10 @@ pub struct Editor {
     bg_loading: Option<usize>,
     bg_failed: Option<usize>,
     undo: UndoStack<Snap>,
+    /// Changes not stored by the server yet (saving is automatic).
     pub dirty: bool,
-    edit_gen: u64,
+    /// Live co-editing: autosave, other people's changes, presence.
+    pub live: live::Live,
     pub t: f64,
     pub playing: bool,
     last_tick: Option<f64>,
@@ -62,7 +65,6 @@ pub struct Editor {
     pub space_down: bool,
     pub space_pan_used: bool,
     pub modal: Option<EdModal>,
-    saving: bool,
     pub music_busy: bool,
     pub show_formations: bool,
     /// Phone layout: the inspector sheet at the bottom is open.
@@ -119,6 +121,7 @@ impl Editor {
             doc.formations.push(arrus_core::Formation::new());
         }
         let audio = d.summary.music.as_ref().and_then(|_| Audio::new(&music_url(&d.summary)));
+        let live = live::Live::new(&doc, d.summary.revision, bg_data.clone());
         Self {
             summary: d.summary,
             doc,
@@ -128,7 +131,7 @@ impl Editor {
             bg_failed: None,
             undo: UndoStack::new(UNDO_LIMIT),
             dirty: false,
-            edit_gen: 0,
+            live,
             t: 0.0,
             playing: false,
             last_tick: None,
@@ -146,7 +149,6 @@ impl Editor {
             space_down: false,
             space_pan_used: false,
             modal: None,
-            saving: false,
             music_busy: false,
             show_formations: !compact,
             show_inspector: false,
@@ -159,14 +161,29 @@ impl Editor {
 
     fn mark_dirty(&mut self) {
         self.dirty = true;
-        self.edit_gen += 1;
+        self.live.note_change(self.now);
+    }
+
+    fn snap_now(&self) -> Snap {
+        Snap { doc: self.doc.clone(), bg: self.bg_data.clone(), seq: self.live.remote_log.len() }
+    }
+
+    /// After the document changed under us (someone else's edit, a reload).
+    pub(super) fn after_outside_change(&mut self) {
+        self.sanitize();
+        self.t = self.t.min(self.timeline_len());
+    }
+
+    /// Forget undo history (it no longer lines up with the document).
+    pub(super) fn clear_history(&mut self) {
+        self.undo = UndoStack::new(UNDO_LIMIT);
     }
 
     /// Apply an edit with an undo step (merged with the previous one when the
     /// same `key` was edited a moment ago).
     pub fn edit(&mut self, key: Option<&str>, f: impl FnOnce(&mut Choreography)) {
-        let (doc, bg) = (&self.doc, &self.bg_data);
-        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone() }, key, self.now);
+        let (doc, bg, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
+        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone(), seq }, key, self.now);
         f(&mut self.doc);
         self.mark_dirty();
         self.sanitize();
@@ -174,8 +191,8 @@ impl Editor {
 
     /// Start a drag gesture that mutates `doc` directly over several frames.
     pub fn begin_gesture(&mut self) {
-        let (doc, bg) = (&self.doc, &self.bg_data);
-        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone() }, None, self.now);
+        let (doc, bg, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
+        self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone(), seq }, None, self.now);
         self.mark_dirty();
     }
 
@@ -193,8 +210,8 @@ impl Editor {
     }
 
     pub fn set_background(&mut self, bg: Option<StageBackground>, data: Option<Rc<String>>) {
-        let (doc, old) = (&self.doc, &self.bg_data);
-        self.undo.record(|| Snap { doc: doc.clone(), bg: old.clone() }, None, self.now);
+        let (doc, old, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
+        self.undo.record(|| Snap { doc: doc.clone(), bg: old.clone(), seq }, None, self.now);
         self.doc.stage_background = bg;
         self.bg_data = data;
         self.mark_dirty();
@@ -216,32 +233,28 @@ impl Editor {
         self.set_background(Some(bg), Some(Rc::new(b64)));
     }
 
-    fn sanitize(&mut self) {
+    pub(super) fn sanitize(&mut self) {
         let f = self.cur();
         let n = edit::props(&self.doc, f).len();
         self.sel.sanitize(self.doc.dancer_count(), n);
     }
 
-    fn snap(&self) -> Snap {
-        Snap { doc: self.doc.clone(), bg: self.bg_data.clone() }
-    }
-
+    /// Go back to an undo snapshot, keeping other people's changes made since.
     fn restore(&mut self, s: Snap) {
-        self.doc = s.doc;
+        self.doc = self.replay_remote(s.doc, s.seq);
         self.bg_data = s.bg;
         self.mark_dirty();
-        self.sanitize();
-        self.t = self.t.min(self.timeline_len());
+        self.after_outside_change();
     }
 
     pub fn undo(&mut self) {
-        if let Ok(s) = self.undo.undo(self.snap()) {
+        if let Ok(s) = self.undo.undo(self.snap_now()) {
             self.restore(s);
         }
     }
 
     pub fn redo(&mut self) {
-        if let Ok(s) = self.undo.redo(self.snap()) {
+        if let Ok(s) = self.undo.redo(self.snap_now()) {
             self.restore(s);
         }
     }
@@ -252,18 +265,6 @@ impl Editor {
 
     pub fn can_redo(&self) -> bool {
         self.undo.can_redo()
-    }
-
-    /// The full document to save (with the background image put back).
-    fn doc_for_save(&self) -> Choreography {
-        let mut d = self.doc.clone();
-        d.last_edit_timestamp = web::now_secs();
-        if let Some(img) = &self.bg_data
-            && let Some(bg) = d.stage_background.as_mut()
-        {
-            bg.file.get_or_insert_with(Default::default).image_file_data = Some((**img).clone());
-        }
-        d
     }
 
     /// Formation edits apply to (the one held or being entered).
@@ -419,7 +420,7 @@ impl Editor {
         }
     }
 
-    fn reload_audio(&mut self) {
+    pub(super) fn reload_audio(&mut self) {
         self.pause();
         self.audio = self.summary.music.as_ref().and_then(|_| Audio::new(&music_url(&self.summary)));
     }
@@ -465,75 +466,6 @@ impl Editor {
 
 fn editor_for(app: &mut App, id: ChoreographyId) -> Option<&mut Editor> {
     app.editor.as_deref_mut().filter(|e| e.summary.id == id)
-}
-
-pub fn save(ed: &mut Editor, app: &mut App) {
-    if ed.saving || !ed.can_edit {
-        return;
-    }
-    ed.saving = true;
-    let id = ed.summary.id;
-    let gen_at = ed.edit_gen;
-    let body = SaveChoreography { base_revision: ed.summary.revision, data: ed.doc_for_save() };
-    app.net.spawn(async move {
-        let r = net::send::<_, Saved>("PUT", &format!("/api/choreographies/{id}"), &body).await;
-        move |app: &mut App| {
-            let Some(ed) = editor_for(app, id) else { return };
-            ed.saving = false;
-            match r {
-                Ok(s) => {
-                    ed.summary = s.summary;
-                    if ed.edit_gen == gen_at {
-                        ed.dirty = false;
-                    }
-                    app.toast("Saved");
-                    app.refresh_storage();
-                }
-                Err(ApiError::Conflict(c)) => ed.modal = Some(EdModal::Conflict(c)),
-                Err(e) => app.fail(e),
-            }
-        }
-    });
-}
-
-fn save_as_copy(ed: &mut Editor, app: &mut App) {
-    ed.saving = true;
-    let old_id = ed.summary.id;
-    let mut data = ed.doc_for_save();
-    data.name = edit::copy_name(&data.name);
-    let name = data.name.clone();
-    let body = CreateChoreography { team_id: Some(ed.summary.team_id), data };
-    app.net.spawn(async move {
-        let r = net::send::<_, ChoreographySummary>("POST", "/api/choreographies", &body).await;
-        let r = match r {
-            Ok(s) => net::get::<ChoreographyDoc>(&format!("/api/choreographies/{}", s.id)).await,
-            Err(e) => Err(e),
-        };
-        move |app: &mut App| {
-            if let Some(ed) = editor_for(app, old_id) {
-                ed.saving = false;
-            }
-            match r {
-                Ok(doc) => {
-                    let compact = app.compact;
-                    let mut new = Editor::new(doc, compact);
-                    if let Some(old) = app.editor.take() {
-                        new.t = old.t.min(new.timeline_len());
-                        new.view = old.view;
-                        new.need_fit = old.view.is_none();
-                        new.view_moved = old.view_moved;
-                        new.easing = old.easing;
-                        new.show_formations = old.show_formations;
-                    }
-                    web::set_hash_choreography(Some(new.summary.id));
-                    app.editor = Some(Box::new(new));
-                    app.toast(format!("Saved as “{name}”"));
-                    app.refresh_storage();
-                }
-                Err(e) => app.fail(e),
-            }
-        }
-    });
 }
 
 fn upload_music(ed: &mut Editor, app: &mut App) {
@@ -630,6 +562,7 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         ed.need_fit = true;
     }
     ed.tick();
+    live::sync(ed, app);
     if ed.playing {
         ui.ctx().request_repaint();
     }
@@ -667,7 +600,9 @@ fn keyboard(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let save_key = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
     if ctx.input_mut(|i| i.consume_shortcut(&save_key)) && ed.can_edit {
-        save(ed, app);
+        // Saving is automatic; send what is pending right away.
+        ed.collect();
+        app.toast("Changes are saved automatically");
     }
     if ctx.egui_wants_keyboard_input() || ed.modal.is_some() {
         return;
@@ -756,22 +691,16 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                             widgets::badge(ui, "View only", theme::TEXT_WEAK);
                         }
                         if ed.can_edit {
-                            let save_btn = ui.add_enabled_ui(ed.dirty && !ed.saving, |ui| widgets::primary_button(ui, "Save"));
-                            if save_btn.inner.clicked() {
-                                save(ed, app);
-                            }
                             if ui.add_enabled(ed.can_redo(), egui::Button::new("↷")).clicked() {
                                 ed.redo();
                             }
                             if ui.add_enabled(ed.can_undo(), egui::Button::new("↶")).clicked() {
                                 ed.undo();
                             }
-                            if ed.saving {
-                                ui.spinner();
-                            }
                         }
-                        let name = if ed.dirty { format!("● {}", ed.doc.name) } else { ed.doc.name.clone() };
-                        ui.add(egui::Label::new(RichText::new(name).strong().size(16.0)).truncate());
+                        widgets::presence(ui, &ed.live.others(), 3);
+                        save_status(ui, ed, true);
+                        ui.add(egui::Label::new(RichText::new(&ed.doc.name).strong().size(16.0)).truncate());
                     });
                     return;
                 }
@@ -780,35 +709,51 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 if !ed.can_edit {
                     widgets::badge(ui, "View only", theme::TEXT_WEAK)
                         .on_hover_text("You can view this choreography; ask your admin for write access to edit.");
-                } else if ed.saving {
-                    ui.spinner();
-                    ui.label(RichText::new("Saving…").color(theme::TEXT_WEAK));
-                } else if ed.dirty {
-                    ui.label(RichText::new("● Unsaved changes").color(theme::WARN));
                 } else {
-                    ui.label(RichText::new("All changes saved").color(theme::TEXT_FAINT)).on_hover_text(format!(
-                        "Revision {} · saved by {} · {}",
-                        ed.summary.revision,
-                        ed.summary.updated_by,
-                        web::local_datetime(ed.summary.updated_at)
-                    ));
+                    save_status(ui, ed, false);
                 }
-                if ed.can_edit {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let save_btn = ui.add_enabled_ui(ed.dirty && !ed.saving, |ui| widgets::primary_button(ui, "Save"));
-                        if save_btn.inner.on_hover_text("Save (Ctrl/Cmd+S)").clicked() {
-                            save(ed, app);
-                        }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ed.can_edit {
                         if ui.add_enabled(ed.can_redo(), egui::Button::new("↷ Redo")).on_hover_text("Shift+Ctrl/Cmd+Z").clicked() {
                             ed.redo();
                         }
-                        if ui.add_enabled(ed.can_undo(), egui::Button::new("↶ Undo")).on_hover_text("Ctrl/Cmd+Z").clicked() {
+                        if ui
+                            .add_enabled(ed.can_undo(), egui::Button::new("↶ Undo"))
+                            .on_hover_text("Ctrl/Cmd+Z · undoes your own changes only")
+                            .clicked()
+                        {
                             ed.undo();
                         }
-                    });
-                }
+                        ui.add_space(6.0);
+                    }
+                    // Who else has it open, left of Undo (like a shared document).
+                    widgets::presence(ui, &ed.live.others(), 6);
+                });
             });
         });
+}
+
+/// "Saving…" / "All changes saved" / "Offline". Compact: a coloured dot only.
+fn save_status(ui: &mut Ui, ed: &Editor, compact: bool) {
+    if !ed.can_edit {
+        return;
+    }
+    let (text, color, tip) = if ed.live.offline {
+        ("Offline – changes will be saved when back online", theme::WARN, "Not connected; your changes are kept and sent automatically.")
+    } else if ed.live.saving() {
+        ("Saving…", theme::TEXT_WEAK, "Your changes are being saved.")
+    } else {
+        ("All changes saved", theme::TEXT_FAINT, "Every change is saved automatically.")
+    };
+    if compact {
+        let (r, resp) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+        let dot = if ed.live.offline { theme::WARN } else if ed.live.saving() { theme::TEXT_WEAK } else { theme::OK };
+        ui.painter().circle_filled(r.center(), 4.0, dot);
+        resp.on_hover_text(text);
+        return;
+    }
+    let tip = format!("{tip}\nRevision {} · last change by {}", ed.summary.revision, ed.summary.updated_by);
+    ui.label(RichText::new(text).color(color)).on_hover_text(tip);
 }
 
 /// Phone layout: a resizable sheet above the timeline (formations or details).
@@ -1093,25 +1038,6 @@ fn modals(ed: &mut Editor, app: &mut App, ctx: &egui::Context) {
                 Some(Choice::Confirm) => {
                     ed.edit(None, |d| edit::remove_dancers(d, set));
                     ed.sel = Selection::None;
-                    false
-                }
-                Some(Choice::Cancel) => false,
-                None => true,
-            }
-        }
-        EdModal::Conflict(c) => {
-            let who = c.updated_by.clone();
-            let when = web::local_datetime(c.updated_at);
-            let copy = edit::copy_name(&ed.doc.name);
-            match widgets::dialog(ctx, "conflict", "Someone else saved", "Save as new choreography", false, true, |ui| {
-                ui.label(format!(
-                    "{who} saved this choreography at {when} since you opened it. Save your version as a new choreography?"
-                ));
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("Your version will be saved as “{copy}”.")).small().color(theme::TEXT_WEAK));
-            }) {
-                Some(Choice::Confirm) => {
-                    save_as_copy(ed, app);
                     false
                 }
                 Some(Choice::Cancel) => false,

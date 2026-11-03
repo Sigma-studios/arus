@@ -1,12 +1,18 @@
-//! Choreography CRUD.
+//! Choreography CRUD, and live co-editing (patches and the event stream).
+
+use std::convert::Infallible;
+use std::time::Duration;
 
 use arrus_api::{
-    ChoreographyDoc, ChoreographySummary, Conflict, CreateChoreography, SaveChoreography, Saved,
+    ChoreographyDoc, ChoreographySummary, Conflict, CreateChoreography, LiveEvent, MAX_SESSION_LEN, PatchChoreography,
+    SaveChoreography, Saved, Viewer, patch as jpatch,
 };
 use arrus_core::Choreography;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 
@@ -157,6 +163,32 @@ pub async fn get(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>)
     Ok(Json(ChoreographyDoc { summary, data }))
 }
 
+/// Store `data` as the next revision of choreography `id` (write access and
+/// quota checked by the caller / here).
+fn store(
+    s: &AppState,
+    conn: &Connection,
+    id: i64,
+    meta: &db::ChoreoMeta,
+    mut data: Choreography,
+    by: &str,
+) -> Result<ChoreographySummary> {
+    let now = db::now();
+    // The app's identity of the choreography never changes on save.
+    data.id = meta.uuid.clone();
+    data.creation_timestamp = meta.creation_timestamp;
+    data.last_edit_timestamp = now;
+    let stored = Stored::new(&data)?;
+    storage::ensure_fits(s, conn, meta.size_bytes, stored.size())?;
+    conn.execute(
+        "UPDATE choreographies SET name = ?1, data = ?2, size_bytes = ?3, formation_count = ?4, \
+         dancer_count = ?5, revision = revision + 1, updated_at = ?6, updated_by = ?7 WHERE id = ?8",
+        params![stored.name, stored.json, stored.size() as i64, stored.formation_count, stored.dancer_count, now, by, id],
+    )?;
+    storage::after_change(s, conn)?;
+    summary(conn, id)
+}
+
 pub async fn save(
     State(state): State<AppState>,
     auth: Auth,
@@ -164,7 +196,7 @@ pub async fn save(
     ApiJson(body): ApiJson<SaveChoreography>,
 ) -> Result<Json<Saved>> {
     let by = auth.user.username();
-    let mut data = body.data;
+    let data = body.data;
     state
         .db(move |s, conn| {
             let meta = writable(conn, &auth.user, id)?;
@@ -175,31 +207,95 @@ pub async fn save(
                     updated_at: meta.updated_at,
                 }));
             }
-            let now = db::now();
-            // The app's identity of the choreography never changes on save.
-            data.id = meta.uuid.clone();
-            data.creation_timestamp = meta.creation_timestamp;
-            data.last_edit_timestamp = now;
-            let stored = Stored::new(&data)?;
-            storage::ensure_fits(s, conn, meta.size_bytes, stored.size())?;
-            conn.execute(
-                "UPDATE choreographies SET name = ?1, data = ?2, size_bytes = ?3, formation_count = ?4, \
-                 dancer_count = ?5, revision = revision + 1, updated_at = ?6, updated_by = ?7 WHERE id = ?8",
-                params![
-                    stored.name,
-                    stored.json,
-                    stored.size() as i64,
-                    stored.formation_count,
-                    stored.dancer_count,
-                    now,
-                    by,
-                    id
-                ],
-            )?;
-            storage::after_change(s, conn)?;
-            Ok(Json(Saved { summary: summary(conn, id)? }))
+            let summary = store(s, conn, id, &meta, data, &by)?;
+            // Live viewers see a new revision they cannot patch their way to: they reload.
+            s.hub.send(id, &LiveEvent::Hello { revision: summary.revision });
+            Ok(Json(Saved { summary }))
         })
         .await
+}
+
+/// Apply a batch of changes to the latest version and pass it on to everyone
+/// viewing the choreography.
+pub async fn patch(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<i64>,
+    ApiJson(body): ApiJson<PatchChoreography>,
+) -> Result<Json<Saved>> {
+    if body.session.is_empty() || body.session.len() > MAX_SESSION_LEN {
+        return Err(Error::bad_request("bad session id"));
+    }
+    let by = auth.user.username();
+    state
+        .db(move |s, conn| {
+            let meta = writable(conn, &auth.user, id)?;
+            if body.ops.is_empty() {
+                return Ok(Json(Saved { summary: summary(conn, id)? }));
+            }
+            let json: String = conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0))?;
+            let mut value: serde_json::Value = serde_json::from_str(&json).map_err(Error::internal)?;
+            jpatch::apply(&mut value, &body.ops);
+            let data: Choreography = serde_json::from_value(value)
+                .map_err(|e| Error::bad_request(format!("this change would break the choreography: {e}")))?;
+            let summary = store(s, conn, id, &meta, data, &by)?;
+            // Sent under the database lock: viewers get revisions in order.
+            s.hub.send(
+                id,
+                &LiveEvent::Patch { revision: summary.revision, session: body.session, batch: body.batch, by, ops: body.ops },
+            );
+            Ok(Json(Saved { summary }))
+        })
+        .await
+}
+
+#[derive(Deserialize)]
+pub struct LiveQuery {
+    session: String,
+}
+
+/// The live event stream of a choreography (server-sent events): a
+/// [`LiveEvent::Hello`] first, then presence and changes as they happen.
+pub async fn live(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<i64>,
+    Query(q): Query<LiveQuery>,
+) -> Result<Response> {
+    if q.session.is_empty()
+        || q.session.len() > MAX_SESSION_LEN
+        || !q.session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(Error::bad_request("bad session id"));
+    }
+    let user = auth.user.clone();
+    let meta = state.db(move |_, conn| readable(conn, &user, id)).await?;
+    let can_write = auth.user.check_write(meta.team_id).is_ok();
+    let viewer = Viewer { session: q.session.clone(), username: auth.user.username(), can_write };
+    // Subscribe before reading the revision, so no change falls in between.
+    let (conn, rx) = state.hub.join(id, viewer);
+    let leave = crate::live::Leave { state: state.clone(), id, conn };
+    let revision = state.db(move |_, conn| Ok(db::choreo_meta(conn, id)?.map_or(0, |m| m.revision))).await?;
+    let hello: std::sync::Arc<str> =
+        serde_json::to_string(&LiveEvent::Hello { revision }).map_err(Error::internal)?.into();
+
+    let stream = futures_util::stream::unfold((rx, leave, Some(hello)), |(mut rx, leave, first)| async move {
+        if let Some(h) = first {
+            return Some((Ok::<_, Infallible>(Event::default().data(&*h)), (rx, leave, None)));
+        }
+        let msg = match rx.recv().await {
+            Ok(m) => m,
+            // Fell behind: make the client reload the document.
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => r#"{"type":"hello","revision":-1}"#.into(),
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+        };
+        Some((Ok(Event::default().data(&*msg)), (rx, leave, None)))
+    });
+    let mut res = Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response();
+    // Reverse proxies must pass events through as they come.
+    res.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
+    res.headers_mut().insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    Ok(res)
 }
 
 pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<StatusCode> {
@@ -207,6 +303,7 @@ pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
         .db(move |s, conn| {
             let meta = writable(conn, &auth.user, id)?;
             conn.execute("DELETE FROM choreographies WHERE id = ?1", [id])?;
+            s.hub.send(id, &LiveEvent::Deleted);
             storage::remove_music_files(s, meta.music_file);
             storage::after_change(s, conn)?;
             Ok(StatusCode::NO_CONTENT)

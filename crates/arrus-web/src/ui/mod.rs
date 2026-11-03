@@ -4,6 +4,7 @@ mod admin;
 mod editor;
 mod inspector;
 mod library;
+mod live;
 mod net;
 mod stage;
 mod timeline;

@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod healthcheck;
+pub mod live;
 pub mod routes;
 pub mod storage;
 pub mod web;
@@ -28,6 +29,8 @@ pub struct Inner {
     pub config: Config,
     pub music_dir: PathBuf,
     pub notifier: alerts::Notifier,
+    /// Who has which choreography open, for live co-editing.
+    pub hub: live::Hub,
     db: Mutex<Connection>,
 }
 
@@ -50,7 +53,7 @@ impl AppState {
         conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [db::now()])?;
         // The Discord webhook is set by the admin in the web UI.
         let notifier = alerts::Notifier::new(alerts::Discord::load(&conn)?, config.public_url.clone());
-        let state = AppState(Arc::new(Inner { config, music_dir, notifier, db: Mutex::new(conn) }));
+        let state = AppState(Arc::new(Inner { config, music_dir, notifier, hub: live::Hub::default(), db: Mutex::new(conn) }));
         {
             // The limit may have changed since the last run.
             let conn = state.db.lock().unwrap_or_else(|p| p.into_inner());

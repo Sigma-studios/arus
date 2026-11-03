@@ -1,0 +1,406 @@
+//! Live co-editing in the editor, like a shared spreadsheet: every change is
+//! saved automatically as a small patch, other people's changes appear as
+//! they make them, and everyone with the choreography open is listed.
+//!
+//! The client keeps the server's document as it last heard of it (`server`)
+//! and that plus its own unconfirmed batches (`shadow`). New local changes
+//! are `diff(shadow, doc)`. The server applies batches in arrival order and
+//! streams them back, numbered by revision; a gap in the numbers (missed
+//! messages, a reconnect) makes the client reload the document and replay
+//! its unconfirmed batches on top. Batches are safe to resend.
+
+use std::collections::VecDeque;
+use std::rc::Rc;
+
+use arrus_api::patch::{self, IMAGE_PATH, PatchOp};
+use arrus_api::{ChoreographyDoc, ChoreographyId, LiveEvent, PatchChoreography, Saved, Viewer};
+use arrus_core::Choreography;
+use serde_json::Value;
+
+use super::editor::Editor;
+use super::{ApiError, App, net};
+use crate::web;
+
+/// Quiet time after the last change before it is sent…
+const DEBOUNCE: f64 = 0.25;
+/// …but during a continuous change (a drag) send at least this often.
+const MAX_DELAY: f64 = 0.5;
+
+struct Batch {
+    id: u64,
+    ops: Vec<PatchOp>,
+    /// Revision the server stored it as, once it said so.
+    acked_rev: Option<i64>,
+}
+
+pub struct Live {
+    pub session: String,
+    /// The server's document as last heard of (without the background image).
+    server: Value,
+    pub server_rev: i64,
+    /// `server` with our unconfirmed batches applied.
+    shadow: Value,
+    unacked: VecDeque<Batch>,
+    next_batch: u64,
+    inflight: Option<u64>,
+    /// The background image as last sent or received.
+    bg_sent: Option<Rc<String>>,
+    /// Local changes not yet turned into a batch.
+    changed: bool,
+    last_change: f64,
+    last_collect: f64,
+    retry_at: f64,
+    failures: u32,
+    /// Saving failed for lack of a connection; retrying.
+    pub offline: bool,
+    pub viewers: Vec<Viewer>,
+    stream: Option<web::EventStream>,
+    stream_dead_since: Option<f64>,
+    resyncing: bool,
+    /// Other people's changes, in order. Undo snapshots replay the ones made
+    /// after them, so undo only takes back your own changes.
+    pub remote_log: Vec<Rc<Vec<PatchOp>>>,
+}
+
+fn value_of(doc: &Choreography) -> Value {
+    serde_json::to_value(doc).unwrap_or(Value::Null)
+}
+
+fn same_image(a: &Option<Rc<String>>, b: &Option<Rc<String>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Rc::ptr_eq(a, b) || a == b,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+impl Live {
+    pub fn new(doc: &Choreography, revision: i64, bg: Option<Rc<String>>) -> Self {
+        let server = value_of(doc);
+        Self {
+            session: web::random_uuid(),
+            shadow: server.clone(),
+            server,
+            server_rev: revision,
+            unacked: VecDeque::new(),
+            next_batch: 1,
+            inflight: None,
+            bg_sent: bg,
+            changed: false,
+            last_change: 0.0,
+            last_collect: 0.0,
+            retry_at: 0.0,
+            failures: 0,
+            offline: false,
+            viewers: Vec::new(),
+            stream: None,
+            stream_dead_since: None,
+            resyncing: false,
+            remote_log: Vec::new(),
+        }
+    }
+
+    pub fn note_change(&mut self, now: f64) {
+        if !self.changed {
+            self.last_collect = now;
+        }
+        self.changed = true;
+        self.last_change = now;
+    }
+
+    /// Changes not yet stored by the server.
+    pub fn unsaved(&self) -> bool {
+        self.changed || self.unacked.iter().any(|b| b.acked_rev.is_none())
+    }
+
+    pub fn saving(&self) -> bool {
+        self.inflight.is_some() || self.unsaved()
+    }
+
+    /// Everyone else with the choreography open, one entry per person.
+    pub fn others(&self) -> Vec<&Viewer> {
+        let mut out: Vec<&Viewer> = Vec::new();
+        for v in self.viewers.iter().filter(|v| v.session != self.session) {
+            match out.iter_mut().find(|o| o.username == v.username) {
+                Some(o) if v.can_write && !o.can_write => *o = v,
+                Some(_) => {}
+                None => out.push(v),
+            }
+        }
+        out
+    }
+
+    fn has_image_op(&self) -> bool {
+        self.unacked.iter().any(|b| b.ops.iter().any(patch::touches_image))
+    }
+}
+
+impl Editor {
+    /// Turn local changes into a batch (or add them to the one waiting).
+    pub fn collect(&mut self) {
+        let now = self.now;
+        let live = &mut self.live;
+        live.changed = false;
+        live.last_collect = now;
+        if !self.can_edit {
+            return;
+        }
+        let v = value_of(&self.doc);
+        let mut ops = patch::diff(&live.shadow, &v);
+        if !same_image(&self.bg_data, &live.bg_sent) {
+            let path = IMAGE_PATH.iter().map(|k| (*k).into()).collect();
+            let value = self.bg_data.as_ref().map_or(Value::Null, |s| Value::String((**s).clone()));
+            ops.push(PatchOp::Set { path, value });
+            live.bg_sent = self.bg_data.clone();
+        }
+        if ops.is_empty() {
+            return;
+        }
+        live.shadow = v;
+        match live.unacked.back_mut() {
+            Some(b) if live.inflight != Some(b.id) && b.acked_rev.is_none() => b.ops.extend(ops),
+            _ => {
+                live.unacked.push_back(Batch { id: live.next_batch, ops, acked_rev: None });
+                live.next_batch += 1;
+            }
+        }
+    }
+
+    /// Rebuild the document from the server's version plus our unconfirmed
+    /// batches (after someone else's change or a reload).
+    fn rebuild(&mut self) -> bool {
+        let live = &mut self.live;
+        let mut shadow = live.server.clone();
+        for b in &live.unacked {
+            patch::apply(&mut shadow, &b.ops);
+        }
+        patch::take_image(&mut shadow);
+        match serde_json::from_value::<Choreography>(shadow.clone()) {
+            Ok(mut d) => {
+                if d.formations.is_empty() {
+                    d.formations.push(arrus_core::Formation::new());
+                }
+                live.shadow = shadow;
+                self.doc = d;
+                self.after_outside_change();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// An undo snapshot brought up to date with other people's later changes.
+    pub fn replay_remote(&self, doc: Choreography, seq: usize) -> Choreography {
+        let log = &self.live.remote_log;
+        if seq >= log.len() {
+            return doc;
+        }
+        let mut v = value_of(&doc);
+        for ops in &log[seq..] {
+            patch::apply(&mut v, ops);
+        }
+        patch::take_image(&mut v);
+        serde_json::from_value(v).unwrap_or(doc)
+    }
+}
+
+/// Every frame: keep the live stream open and send pending changes.
+pub fn sync(ed: &mut Editor, app: &mut App) {
+    let id = ed.summary.id;
+    let now = ed.now;
+    open_stream(ed, app, id, now);
+    if ed.live.changed && (now - ed.live.last_change >= DEBOUNCE || now - ed.live.last_collect >= MAX_DELAY) {
+        ed.collect();
+    }
+    ed.dirty = ed.live.unsaved();
+    if ed.live.changed || ed.live.offline {
+        app.net.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+    }
+    if !ed.can_edit || ed.live.inflight.is_some() || now < ed.live.retry_at {
+        return;
+    }
+    let Some(b) = ed.live.unacked.iter().find(|b| b.acked_rev.is_none()) else { return };
+    let batch = b.id;
+    let body = PatchChoreography { session: ed.live.session.clone(), batch, ops: b.ops.clone() };
+    ed.live.inflight = Some(batch);
+    app.net.spawn(async move {
+        let r = net::send::<_, Saved>("POST", &format!("/api/choreographies/{id}/patch"), &body).await;
+        move |app: &mut App| on_sent(app, id, batch, r)
+    });
+}
+
+fn on_sent(app: &mut App, id: ChoreographyId, batch: u64, r: net::ApiResult<Saved>) {
+    let Some(ed) = editor_for(app, id) else { return };
+    let now = ed.now;
+    let live = &mut ed.live;
+    live.inflight = None;
+    match r {
+        Ok(saved) => {
+            live.failures = 0;
+            live.offline = false;
+            if let Some(b) = live.unacked.iter_mut().find(|b| b.id == batch) {
+                b.acked_rev = Some(saved.summary.revision);
+            }
+            let rev = ed.summary.revision;
+            ed.summary = saved.summary;
+            ed.summary.revision = rev;
+            if ed.live.stream.is_none() || ed.live.stream_dead_since.is_some() {
+                // No live stream to confirm it: catch up by reloading.
+                resync(app, id);
+            }
+        }
+        Err(ApiError::Unauthorized) => web::navigate("/login"),
+        Err(ApiError::Network(_)) | Err(ApiError::Http { status: 500.., .. }) => {
+            // Offline or the server is busy: try the same batch again (safe to resend).
+            live.failures += 1;
+            live.offline = true;
+            live.retry_at = now + f64::from(2u32.pow(live.failures.min(4))).min(15.0);
+        }
+        Err(e) => {
+            // Refused (no permission, storage full, broken change): drop it and
+            // go back to what the server has.
+            live.unacked.retain(|b| b.id != batch);
+            app.fail(e);
+            resync(app, id);
+        }
+    }
+}
+
+fn open_stream(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
+    let live = &mut ed.live;
+    if live.stream.is_some() && live.stream_dead_since.is_none() {
+        return;
+    }
+    // A stream the browser gave up on is reopened every few seconds.
+    if live.stream_dead_since.is_some_and(|t| now - t < 5.0) {
+        return;
+    }
+    let url = format!("/api/choreographies/{id}/live?session={}", live.session);
+    let (net1, net2) = (app.net.clone(), app.net.clone());
+    live.stream = web::EventStream::open(
+        &url,
+        move |text| net1.post(move |app: &mut App| on_event(app, id, &text)),
+        move |gave_up| {
+            net2.post(move |app: &mut App| {
+                if let Some(ed) = editor_for(app, id) {
+                    let now = ed.now;
+                    if gave_up {
+                        ed.live.stream_dead_since = Some(now);
+                    }
+                    ed.live.viewers.clear();
+                }
+            })
+        },
+    );
+    live.stream_dead_since = live.stream.is_none().then_some(now);
+}
+
+fn on_event(app: &mut App, id: ChoreographyId, text: &str) {
+    let Ok(ev) = serde_json::from_str::<LiveEvent>(text) else { return };
+    if matches!(ev, LiveEvent::Deleted) {
+        app.close_editor();
+        app.toast_error("Someone deleted this choreography.");
+        return;
+    }
+    let Some(ed) = editor_for(app, id) else { return };
+    ed.live.stream_dead_since = None;
+    if apply_event(ed, ev) {
+        resync(app, id);
+    }
+}
+
+/// Returns whether the document must be reloaded.
+fn apply_event(ed: &mut Editor, ev: LiveEvent) -> bool {
+    match ev {
+        LiveEvent::Hello { revision } => return revision != ed.live.server_rev,
+        LiveEvent::Presence { viewers } => ed.live.viewers = viewers,
+        LiveEvent::Patch { revision, session, batch, by, ops } => {
+            if revision <= ed.live.server_rev {
+                return false;
+            }
+            if revision != ed.live.server_rev + 1 {
+                return true;
+            }
+            ed.collect();
+            let live = &mut ed.live;
+            patch::apply(&mut live.server, &ops);
+            let image = patch::take_image(&mut live.server);
+            live.server_rev = revision;
+            ed.summary.revision = revision;
+            ed.summary.updated_by = by;
+            if session == ed.live.session {
+                // Ours, now stored: the document already has it.
+                ed.live.unacked.retain(|b| b.id != batch);
+                return false;
+            }
+            if ops.iter().any(patch::touches_image) && !ed.live.has_image_op() {
+                ed.bg_data = image.map(Rc::new);
+                ed.live.bg_sent = ed.bg_data.clone();
+            }
+            ed.live.remote_log.push(Rc::new(ops));
+            return !ed.rebuild();
+        }
+        LiveEvent::Summary { summary } => {
+            let music_changed = summary.music != ed.summary.music;
+            let rev = ed.summary.revision;
+            ed.summary = summary;
+            ed.summary.revision = rev;
+            if music_changed {
+                ed.reload_audio();
+            }
+        }
+        LiveEvent::Deleted => {}
+    }
+    false
+}
+
+/// Reload the document from the server and replay our unconfirmed changes on top.
+fn resync(app: &mut App, id: ChoreographyId) {
+    let net = app.net.clone();
+    let Some(ed) = editor_for(app, id) else { return };
+    if ed.live.resyncing {
+        return;
+    }
+    ed.live.resyncing = true;
+    ed.collect();
+    net.spawn(async move {
+        let r = net::get::<ChoreographyDoc>(&format!("/api/choreographies/{id}")).await;
+        move |app: &mut App| {
+            let Some(ed) = editor_for(app, id) else { return };
+            ed.live.resyncing = false;
+            match r {
+                Ok(doc) => {
+                    ed.collect();
+                    let mut v = value_of(&doc.data);
+                    let image = patch::take_image(&mut v);
+                    let live = &mut ed.live;
+                    live.server = v;
+                    live.server_rev = doc.summary.revision;
+                    let rev = live.server_rev;
+                    live.unacked.retain(|b| b.acked_rev.is_none_or(|r| r > rev));
+                    if !live.has_image_op() {
+                        ed.bg_data = image.map(Rc::new);
+                        ed.live.bg_sent = ed.bg_data.clone();
+                    }
+                    ed.summary = doc.summary;
+                    // A full reload: history no longer lines up with other people's changes.
+                    ed.live.remote_log.clear();
+                    ed.clear_history();
+                    if !ed.rebuild() {
+                        app.toast_error("Could not apply the latest changes; please reopen the choreography.");
+                    }
+                }
+                Err(ApiError::Unauthorized) => web::navigate("/login"),
+                Err(_) => {
+                    // Try again shortly (the stream's next hello will ask too).
+                    ed.live.server_rev = -2;
+                    ed.live.stream_dead_since.get_or_insert(ed.now);
+                }
+            }
+        }
+    });
+}
+
+fn editor_for(app: &mut App, id: ChoreographyId) -> Option<&mut Editor> {
+    app.editor.as_deref_mut().filter(|e| e.summary.id == id)
+}

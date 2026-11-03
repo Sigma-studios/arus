@@ -31,6 +31,8 @@
 //! | GET  | `/api/choreographies/{id}` | | [`ChoreographyDoc`] | team readers |
 //! | PUT  | `/api/choreographies/{id}` | [`SaveChoreography`] | [`Saved`], or 409 [`Conflict`] | writers |
 //! | DELETE | `/api/choreographies/{id}` | | 204 (and its music) | writers |
+//! | POST | `/api/choreographies/{id}/patch` | [`PatchChoreography`] | [`Saved`] | writers |
+//! | GET  | `/api/choreographies/{id}/live?session={s}` | | `text/event-stream` of [`LiveEvent`] JSON | team readers |
 //! | GET  | `/api/choreographies/{id}/export` | | `.arrus` bytes (`Content-Disposition: attachment`) | team readers |
 //! | POST | `/api/teams/{id}/import` | raw `.arrus` / `.aubkp` bytes, header `X-Filename` | [`ImportResult`] | writers of that team |
 //! | GET  | `/api/choreographies/{id}/music` | | audio bytes with its content type, HTTP Range supported | team readers |
@@ -44,8 +46,12 @@
 //! "Team readers" = the admin, or any member of the choreography's team.
 //! A member's own team is implicit; the admin names the team (`team_id` / `?team=`).
 
+pub mod patch;
+
 use arrus_core::Choreography;
 use serde::{Deserialize, Serialize};
+
+pub use patch::PatchOp;
 
 /// Header every mutating request must carry, with value `1`.
 pub const CSRF_HEADER: &str = "X-Arus";
@@ -182,6 +188,47 @@ pub struct CreateChoreography {
 pub struct SaveChoreography {
     pub base_revision: i64,
     pub data: Choreography,
+}
+
+/// Live co-editing: a batch of changes made by one editor session, applied to
+/// the latest version (see [`patch`]). Never a conflict: concurrent changes
+/// merge field by field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PatchChoreography {
+    /// The sending editor session (its own changes come back tagged with it).
+    pub session: String,
+    /// Numbers the session's batches; echoed in [`LiveEvent::Patch`].
+    pub batch: u64,
+    pub ops: Vec<PatchOp>,
+}
+
+/// Someone with the choreography open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Viewer {
+    pub session: String,
+    pub username: String,
+    pub can_write: bool,
+}
+
+/// Longest editor session id accepted.
+pub const MAX_SESSION_LEN: usize = 64;
+
+/// One message of the live stream of a choreography.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LiveEvent {
+    /// First message, and again after a whole-document save: the current
+    /// revision. A client that knows another revision reloads the document.
+    Hello { revision: i64 },
+    /// Who has the choreography open (sent whenever that changes).
+    Presence { viewers: Vec<Viewer> },
+    /// A batch of changes, now `revision`. Revisions come in order without
+    /// gaps; a gap means messages were missed.
+    Patch { revision: i64, session: String, batch: u64, by: String, ops: Vec<PatchOp> },
+    /// The music changed (the document did not).
+    Summary { summary: ChoreographySummary },
+    /// The choreography was deleted.
+    Deleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

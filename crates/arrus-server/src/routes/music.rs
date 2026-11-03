@@ -2,7 +2,7 @@
 
 use std::io::SeekFrom;
 
-use arrus_api::{ChoreographySummary, MAX_MUSIC_BYTES};
+use arrus_api::{ChoreographySummary, LiveEvent, MAX_MUSIC_BYTES};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -180,7 +180,9 @@ pub async fn put(
     if res.is_err() {
         let _ = tokio::fs::remove_file(&path2).await;
     }
-    Ok(Json(res?))
+    let summary = res?;
+    state.hub.send(id, &LiveEvent::Summary { summary: summary.clone() });
+    Ok(Json(summary))
 }
 
 async fn stream_to_file(mut body: Body, path: &std::path::Path) -> Result<u64> {
@@ -215,7 +217,9 @@ pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
             )?;
             storage::remove_music_files(s, meta.music_file);
             storage::after_change(s, conn)?;
-            Ok(Json(summary(conn, id)?))
+            let summary = summary(conn, id)?;
+            s.hub.send(id, &LiveEvent::Summary { summary: summary.clone() });
+            Ok(Json(summary))
         })
         .await
 }

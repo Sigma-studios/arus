@@ -129,3 +129,19 @@ pub fn on_color(c: Color32) -> Color32 {
     let l = 0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32;
     if l > 150.0 { Color32::from_rgb(0x12, 0x14, 0x18) } else { Color32::WHITE }
 }
+
+/// A stable colour per person (presence initials).
+pub fn person_color(name: &str) -> Color32 {
+    const COLORS: [Color32; 8] = [
+        Color32::from_rgb(0xE0, 0x47, 0x9E),
+        Color32::from_rgb(0x3A, 0x86, 0xFF),
+        Color32::from_rgb(0x2E, 0xA8, 0x6B),
+        Color32::from_rgb(0xF0, 0x8A, 0x24),
+        Color32::from_rgb(0x9B, 0x5D, 0xE5),
+        Color32::from_rgb(0x00, 0x9F, 0xB7),
+        Color32::from_rgb(0xD9, 0x48, 0x3B),
+        Color32::from_rgb(0x6D, 0x8A, 0x1F),
+    ];
+    let h = name.bytes().fold(5381u32, |h, b| h.wrapping_mul(33) ^ u32::from(b));
+    COLORS[h as usize % COLORS.len()]
+}

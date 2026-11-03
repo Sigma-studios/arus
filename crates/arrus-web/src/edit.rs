@@ -361,11 +361,6 @@ pub fn props_at(c: &Choreography, t: f64, easing: Easing) -> Vec<Prop> {
     }
 }
 
-/// Name for a "save as copy".
-pub fn copy_name(name: &str) -> String {
-    format!("{name} (copy)")
-}
-
 /// Label of formation `i` for lists: "3 · Chorus" or "3".
 pub fn formation_label(c: &Choreography, i: usize) -> String {
     match c.formations.get(i).and_then(|f| f.name.as_deref()).map(str::trim) {
@@ -540,7 +535,6 @@ mod tests {
 
     #[test]
     fn names() {
-        assert_eq!(copy_name("Show"), "Show (copy)");
         let mut c = sample();
         c.formations[1].name = Some(" Chorus ".into());
         assert_eq!(formation_label(&c, 1), "2 · Chorus");

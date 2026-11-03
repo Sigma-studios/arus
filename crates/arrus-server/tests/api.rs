@@ -829,3 +829,103 @@ async fn alert_settings() {
     assert!(!s.webhook_set);
     assert_eq!(s.mention, "@here <@&42>");
 }
+
+/// The next server-sent event's JSON on a live stream (skipping keep-alives).
+async fn next_live(body: &mut Body) -> LiveEvent {
+    loop {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.frame())
+            .await
+            .expect("no live event within 5 s")
+            .expect("stream ended")
+            .unwrap();
+        let Ok(data) = frame.into_data() else { continue };
+        let text = String::from_utf8_lossy(&data).into_owned();
+        if let Some(json) = text.lines().find_map(|l| l.strip_prefix("data: ")) {
+            return serde_json::from_str(json).unwrap_or_else(|e| panic!("{e}: {json}"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_patches_merge_and_stream() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "A").await;
+    let w = t.member(&admin, team.id, "w", true).await;
+    let w = t.login("w", &w.password).await;
+    let r = t.member(&admin, team.id, "r", false).await;
+    let r = t.login("r", &r.password).await;
+    let s: ChoreographySummary = t.create(&w, None, sample()).await.json();
+    let url = format!("/api/choreographies/{}", s.id);
+    let base = serde_json::to_value(t.get(&url, &w).await.json::<ChoreographyDoc>().data).unwrap();
+
+    // The reader follows along live.
+    let req = Request::builder()
+        .uri(format!("{url}/live?session=reader-1"))
+        .header(header::COOKIE, format!("arus_session={r}"))
+        // As a browser asks: the stream must still not be compressed (buffered).
+        .header(header::ACCEPT_ENCODING, "gzip, br")
+        .body(Body::empty())
+        .unwrap();
+    let res = t.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(res.headers()[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/event-stream"));
+    assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+    let mut live = res.into_body();
+    assert_eq!(next_live(&mut live).await, LiveEvent::Hello { revision: 1 });
+    match next_live(&mut live).await {
+        LiveEvent::Presence { viewers } => {
+            assert_eq!(viewers, vec![Viewer { session: "reader-1".into(), username: "r".into(), can_write: false }]);
+        }
+        e => panic!("{e:?}"),
+    }
+
+    // Two writers change different things from the same starting point: both survive.
+    let mut a = base.clone();
+    a["name"] = "From A".into();
+    let mut b = base.clone();
+    b["formations"][0]["duration"] = 42.0.into();
+    let send = |session: &str, batch: u64, to: &serde_json::Value| PatchChoreography {
+        session: session.into(),
+        batch,
+        ops: patch::diff(&base, to),
+    };
+    let saved: Saved = t.call(Method::POST, &format!("{url}/patch"), Some(&w), Some(send("a", 1, &a))).await.json();
+    assert_eq!(saved.summary.revision, 2);
+    assert_eq!(saved.summary.name, "From A");
+    let saved: Saved = t.call(Method::POST, &format!("{url}/patch"), Some(&admin), Some(send("b", 7, &b))).await.json();
+    assert_eq!(saved.summary.revision, 3);
+    assert_eq!(saved.summary.updated_by, "admin");
+    let doc: ChoreographyDoc = t.get(&url, &w).await.json();
+    assert_eq!(doc.data.name, "From A");
+    assert_eq!(doc.data.formations[0].duration, 42.0);
+
+    match next_live(&mut live).await {
+        LiveEvent::Patch { revision, session, batch, by, ops } => {
+            assert_eq!((revision, session.as_str(), batch, by.as_str()), (2, "a", 1, "w"));
+            assert_eq!(ops, patch::diff(&base, &a));
+        }
+        e => panic!("{e:?}"),
+    }
+    assert!(matches!(next_live(&mut live).await, LiveEvent::Patch { revision: 3, batch: 7, .. }));
+
+    // Readers cannot patch; changes that break the document are refused.
+    let r403 = t.call(Method::POST, &format!("{url}/patch"), Some(&r), Some(send("r", 1, &a))).await;
+    assert_eq!(r403.status, StatusCode::FORBIDDEN);
+    let mut broken = base.clone();
+    broken["formations"] = "nope".into();
+    let bad = t.call(Method::POST, &format!("{url}/patch"), Some(&w), Some(send("a", 2, &broken))).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    bad.error();
+    let bad_session = t.call(Method::POST, &format!("{url}/patch"), Some(&w), Some(send("", 2, &a))).await;
+    assert_eq!(bad_session.status, StatusCode::BAD_REQUEST);
+    assert_eq!(t.get(&format!("{url}/live?session=no%20spaces"), &r).await.status, StatusCode::BAD_REQUEST);
+
+    // A whole-document save tells live viewers to reload; deleting tells them it is gone.
+    let doc: ChoreographyDoc = t.get(&url, &w).await.json();
+    let put = SaveChoreography { base_revision: 3, data: doc.data };
+    assert_eq!(t.call(Method::PUT, &url, Some(&w), Some(put)).await.status, StatusCode::OK);
+    assert_eq!(next_live(&mut live).await, LiveEvent::Hello { revision: 4 });
+    assert_eq!(t.call(Method::DELETE, &url, Some(&w), None::<()>).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(next_live(&mut live).await, LiveEvent::Deleted);
+}

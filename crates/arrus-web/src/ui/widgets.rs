@@ -29,6 +29,31 @@ pub fn fullscreen_button(ui: &mut Ui) {
     }
 }
 
+/// Coloured initials of the other people with the choreography open (at
+/// most `max`, then "+n"), for a right-to-left layout.
+pub fn presence(ui: &mut Ui, others: &[&arrus_api::Viewer], max: usize) {
+    if others.is_empty() {
+        return;
+    }
+    let extra = others.len().saturating_sub(max);
+    if extra > 0 {
+        let names: Vec<&str> = others[max..].iter().map(|v| v.username.as_str()).collect();
+        ui.label(RichText::new(format!("+{extra}")).color(theme::TEXT_WEAK)).on_hover_text(names.join(", "));
+    }
+    ui.spacing_mut().item_spacing.x = 3.0;
+    for v in others.iter().take(max).rev() {
+        let (r, resp) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
+        let color = theme::person_color(&v.username);
+        let p = ui.painter();
+        p.circle_filled(r.center(), 12.5, color);
+        p.circle_stroke(r.center(), 12.5, Stroke::new(1.5, theme::PANEL));
+        let initial: String = v.username.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+        p.text(r.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(13.0), Color32::WHITE);
+        resp.on_hover_text(format!("{} · {}", v.username, if v.can_write { "editing" } else { "viewing" }));
+    }
+    ui.spacing_mut().item_spacing.x = 8.0;
+}
+
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).color(Color32::WHITE).strong()).fill(theme::primary_fill()))
 }

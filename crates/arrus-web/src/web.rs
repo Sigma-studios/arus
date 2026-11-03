@@ -206,6 +206,42 @@ pub fn local_datetime(unix: i64) -> String {
 }
 
 /// A random v4 UUID (the server replaces it anyway).
+/// A server-sent event stream. The browser reconnects by itself after a
+/// network error; closed when dropped.
+pub struct EventStream {
+    es: web_sys::EventSource,
+    _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_error: Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl EventStream {
+    /// `on_message` gets each event's data; `on_error` whether the browser
+    /// gave up (it does after an HTTP error, e.g. when logged out).
+    pub fn open(url: &str, mut on_message: impl FnMut(String) + 'static, mut on_error: impl FnMut(bool) + 'static) -> Option<Self> {
+        let es = web_sys::EventSource::new(url).ok()?;
+        let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            if let Some(s) = e.data().as_string() {
+                on_message(s);
+            }
+        });
+        let es2 = es.clone();
+        let on_error = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+            on_error(es2.ready_state() == web_sys::EventSource::CLOSED);
+        });
+        es.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        Some(Self { es, _on_message: on_message, _on_error: on_error })
+    }
+}
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        self.es.set_onmessage(None);
+        self.es.set_onerror(None);
+        self.es.close();
+    }
+}
+
 pub fn random_uuid() -> String {
     let mut b = [0u8; 16];
     for x in &mut b {
