@@ -161,6 +161,6 @@ blank, as in the sample).
 Structure is complete; these are semantics to check against a real export:
 - **`y = 0` is the back (backstage) edge**, `y` grows towards the audience (front). Earlier notes read `Test-v2.arrus` the other way round (dancers 1–3 "near the audience" at `y` 0.5–1.0); the editor now follows this orientation
 - ✅ **`x` spans `rows` (0–14) and `y` spans `columns` (0–8)**: the app's naming is swapped versus intuition. Dancers 8–12 at `x = 13` are on stage at the performers' right (audience's left), so **`x` grows towards stage right**. The backstage cells are **inside** the grid (confirmed with a real export: `24×14`, `sides: 2, back: 2`, dancers placed anywhere in `x` 0.5–23.5, `y` 0.5–13): `sides` cells at both x ends, `back` cells from `y = 0`, `front` cells up to `columns`
-- `settings.isSceneDirectionsInverted` probably mirrors this orientation in the app's view
+- `settings.isSceneDirectionsInverted`: `false` shows the audience at the top, `true` the backstage at the top ("view from the audience"), as the app shows a real export with `true`
 - props are a premium feature, so no sample: best guesses are `width` along x, `length` along y, `height` vertical (3D only), `rotationAngle` in radians (Flutter convention), `alpha` 0–1
 - prop `rotationAngle` units, `alpha` range, and `width`/`length`/`height` axes

@@ -303,7 +303,8 @@ impl Editor {
 
     /// Nudge the selection by a screen direction (arrow keys).
     fn nudge(&mut self, screen_dir: (f64, f64), step: f64) {
-        let inv = self.doc.settings.is_scene_directions_inverted;
+        // Same orientation as the stage (see `stage::show`).
+        let inv = !self.doc.settings.is_scene_directions_inverted;
         let s = if inv { -step } else { step };
         let d = P::new(screen_dir.0 * s, screen_dir.1 * s);
         let f = self.cur();
@@ -869,7 +870,7 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                         ed.need_fit = true;
                     }
                     let mut inv = ed.doc.settings.is_scene_directions_inverted;
-                    if ui.toggle_value(&mut inv, "Backstage view").changed() {
+                    if ui.toggle_value(&mut inv, "Audience view").changed() {
                         let mut s = ed.doc.settings.clone();
                         s.is_scene_directions_inverted = inv;
                         ed.set_settings(s, None);

@@ -41,7 +41,9 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     // so an overflowing row elsewhere can never push the stage off-screen.
     let visible = rect.intersect(ui.ctx().content_rect());
     let visible = if visible.is_positive() { visible } else { rect };
-    let inverted = ed.doc.settings.is_scene_directions_inverted;
+    // As in the ArrangeUs app: by default the audience is at the top;
+    // `isSceneDirectionsInverted` puts the backstage at the top.
+    let inverted = !ed.doc.settings.is_scene_directions_inverted;
 
     // View: fit on open / on request / on resize when untouched.
     let resized = (visible.size() - ed.last_stage_size).length() > 1.0;
@@ -396,8 +398,8 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
             }
             ui.separator();
             let mut inv = ed.doc.settings.is_scene_directions_inverted;
-            let label = if ed.compact { "Backstage view" } else { "View from backstage" };
-            if ui.toggle_value(&mut inv, label).on_hover_text("Rotate the stage 180°: audience at the top").changed() {
+            let label = if ed.compact { "Audience view" } else { "View from audience" };
+            if ui.toggle_value(&mut inv, label).on_hover_text("Rotate the stage 180°: backstage at the top").changed() {
                 let mut s = ed.doc.settings.clone();
                 s.is_scene_directions_inverted = inv;
                 ed.set_settings(s, None);
