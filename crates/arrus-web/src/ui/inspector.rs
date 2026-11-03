@@ -322,7 +322,6 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings) -> bool {
     cb(ui, &mut s.is_dancer_names_shown, "Dancer names", "");
     cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Small numbers next to dancers whose label is not their number");
     cb(ui, &mut s.is_ghost_dancers_shown, "Previous formation (ghosts)", "");
-    cb(ui, &mut s.is_future_dancers_shown, "Next formation (outlines)", "");
     cb(ui, &mut s.is_transition_paths_shown, "Transition paths", "Where each dancer comes from");
     cb(ui, &mut s.is_additional_indicators_shown, "Additional indicators", "Coordinates while dragging dancers");
     ch
@@ -375,6 +374,8 @@ fn settings(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     }
 
     widgets::section(ui, if can { "View" } else { "View (only on this screen)" });
+    ui.checkbox(&mut ed.show_next, "Next formation (outlines)")
+        .on_hover_text("Only on this screen; off each time you open a choreography");
     let mut s = ed.doc.settings.clone();
     if view_toggles(ui, &mut s) {
         let refit = s.is_backstage_shown != ed.doc.settings.is_backstage_shown;

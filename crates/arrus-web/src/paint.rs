@@ -34,6 +34,8 @@ pub struct Scene<'a> {
     pub handles: bool,
     /// Hide editing-only overlays while playing.
     pub playing: bool,
+    /// Outlines of the next formation (a per-screen view option).
+    pub next_outlines: bool,
 }
 
 /// Screen distance between a prop's front edge and its rotation handle.
@@ -168,7 +170,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     {
         ghost(&a.units, 0.22);
     }
-    if set.is_future_dancers_shown
+    if s.next_outlines
         && let Some(n) = next
     {
         for u in &n.units {

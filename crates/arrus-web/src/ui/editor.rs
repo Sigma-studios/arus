@@ -69,6 +69,9 @@ pub struct Editor {
     pub show_formations: bool,
     /// Phone layout: the inspector sheet at the bottom is open.
     pub show_inspector: bool,
+    /// "Next formation (outlines)": off whenever a choreography is opened and
+    /// only for this screen (the file's own setting is kept as it is).
+    pub show_next: bool,
     /// Touch stand-in for Shift: taps toggle dancers, empty drags box-select.
     pub multi_select: bool,
     /// egui time of this frame.
@@ -152,6 +155,7 @@ impl Editor {
             music_busy: false,
             show_formations: !compact,
             show_inspector: false,
+            show_next: false,
             multi_select: false,
             now: 0.0,
         }

@@ -335,6 +335,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
         background,
         handles: editing,
         playing: ed.playing,
+        next_outlines: ed.show_next,
     };
     paint::paint_stage(&painter, &scene);
 
