@@ -156,8 +156,8 @@ impl SceneSize {
     }
 }
 
-/// Extra off-stage cells: `sides` on both `x` ends, `back` before `y = 0`,
-/// `front` (audience side) beyond `y = depth`.
+/// Backstage cells, taken from the grid (not added to it): `sides` at both `x`
+/// ends, `back` from `y = 0`, `front` (audience side) up to `y = depth`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackstageSize {

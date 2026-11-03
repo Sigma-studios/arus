@@ -47,21 +47,27 @@ impl Bounds {
     }
 }
 
-/// The stage proper: `x` in `0..=rows`, `y` in `0..=columns`.
-pub fn stage_bounds(c: &Choreography) -> Bounds {
+/// The whole grid: `x` in `0..=rows`, `y` in `0..=columns`. As in the
+/// ArrangeUs app, the backstage is part of it (see [`stage_bounds`]), and
+/// dancers may stand anywhere in it.
+pub fn drawable_bounds(c: &Choreography) -> Bounds {
     Bounds::new(P::new(0.0, 0.0), P::new(c.grid_size.width().max(1.0), c.grid_size.depth().max(1.0)))
 }
 
-/// Stage plus backstage: `sides` beyond both x ends, `back` before y = 0,
-/// `front` (audience side) beyond y = columns.
-pub fn drawable_bounds(c: &Choreography) -> Bounds {
-    let s = stage_bounds(c);
+/// The performing area. With the backstage on, it is the grid minus its outer
+/// cells: `sides` on both x ends, `back` from y = 0, `front` (audience side)
+/// up to y = columns. Otherwise the whole grid.
+pub fn stage_bounds(c: &Choreography) -> Bounds {
+    let g = drawable_bounds(c);
+    if !backstage_on(c) {
+        return g;
+    }
     let b = &c.grid_size.backstage;
     let sides = b.sides.max(0) as f64;
-    Bounds::new(
-        P::new(-sides, -(b.back.max(0) as f64)),
-        P::new(s.max.x + sides, s.max.y + b.front.max(0) as f64),
-    )
+    let (back, front) = (b.back.max(0) as f64, b.front.max(0) as f64);
+    let s = Bounds::new(P::new(g.min.x + sides, g.min.y + back), P::new(g.max.x - sides, g.max.y - front));
+    // A backstage that eats the whole grid leaves no stage: ignore it.
+    if s.width() < 1.0 || s.height() < 1.0 { g } else { s }
 }
 
 /// Whether the choreography sets up a backstage beyond the app's default
@@ -73,10 +79,10 @@ pub fn backstage_configured(c: &Choreography) -> bool {
     b.back > d.back || b.front > d.front || b.sides > d.sides
 }
 
-/// Whether any dancer of any formation stands outside the stage proper.
-pub fn anyone_backstage(c: &Choreography) -> bool {
-    let s = stage_bounds(c);
-    c.formations.iter().flat_map(|f| &f.units).any(|u| !s.contains(u.position))
+/// Whether the backstage is on: toggled on, or set up in the file (as the
+/// ArrangeUs app shows it).
+pub fn backstage_on(c: &Choreography) -> bool {
+    c.settings.is_backstage_shown || backstage_configured(c)
 }
 
 /// Round to the nearest multiple of `step`.
@@ -324,17 +330,32 @@ mod tests {
     }
 
     #[test]
-    fn bounds_include_backstage() {
+    fn backstage_takes_cells_of_the_grid() {
         let mut c = Choreography::new("t", "id", 0);
+        let grid = Bounds::new(P::new(0.0, 0.0), P::new(14.0, 8.0));
+        // Off: the whole grid is stage.
+        assert_eq!(drawable_bounds(&c), grid);
+        assert_eq!(stage_bounds(&c), grid);
+        // On: the outer cells become backstage; the grid does not grow.
         c.grid_size.backstage.front = 1;
         c.grid_size.backstage.back = 3;
-        let d = drawable_bounds(&c);
-        assert_eq!(d.min, P::new(-2.0, -3.0));
-        assert_eq!(d.max, P::new(16.0, 9.0));
-        assert!(!anyone_backstage(&c));
-        c.add_dancer(arrus_core::Unit::at(-1.0, 2.0));
-        assert!(anyone_backstage(&c));
-        assert_eq!(d.clamp(P::new(-9.0, 20.0)), P::new(-2.0, 9.0));
+        assert_eq!(drawable_bounds(&c), grid);
+        assert_eq!(stage_bounds(&c), Bounds::new(P::new(2.0, 3.0), P::new(12.0, 7.0)));
+        assert_eq!(drawable_bounds(&c).clamp(P::new(-9.0, 20.0)), P::new(0.0, 8.0));
+        // A backstage bigger than the grid is ignored.
+        c.grid_size.backstage.sides = 7;
+        assert_eq!(stage_bounds(&c), grid);
+    }
+
+    #[test]
+    fn unicup_backstage() {
+        // The ArrangeUs export that showed the bug: 24 x 14, sides 2, back 2.
+        let mut c = Choreography::new("t", "id", 0);
+        c.grid_size.rows = 24;
+        c.grid_size.columns = 14;
+        c.grid_size.backstage.back = 2;
+        assert_eq!(drawable_bounds(&c), Bounds::new(P::new(0.0, 0.0), P::new(24.0, 14.0)));
+        assert_eq!(stage_bounds(&c), Bounds::new(P::new(2.0, 2.0), P::new(22.0, 14.0)));
     }
 
     #[test]

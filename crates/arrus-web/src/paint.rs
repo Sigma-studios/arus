@@ -56,20 +56,15 @@ pub fn dancer_radius(c: &Choreography) -> f64 {
     (c.settings.dancer_size_multiplier.clamp(0.1, 3.0)) / 2.0
 }
 
-/// Whether the backstage is on: toggled on, or set up in the file (as the
-/// ArrangeUs app shows it).
-pub fn backstage_on(c: &Choreography) -> bool {
-    c.settings.is_backstage_shown || geom::backstage_configured(c)
-}
-
-/// Whether the backstage area should be drawn (on, or someone is there).
-pub fn backstage_visible(c: &Choreography) -> bool {
-    backstage_on(c) || geom::anyone_backstage(c)
-}
-
-/// The stage cells to fit into the view.
+/// The cells to fit into the view: the whole grid, plus any dancer left
+/// outside it (older web documents put the backstage around the grid).
 pub fn fit_bounds(c: &Choreography) -> Bounds {
-    if backstage_visible(c) { geom::drawable_bounds(c) } else { geom::stage_bounds(c) }
+    let mut b = geom::drawable_bounds(c);
+    for p in c.formations.iter().flat_map(|f| &f.units).map(|u| u.position) {
+        b.min = P::new(b.min.x.min(p.x.floor()), b.min.y.min(p.y.floor()));
+        b.max = P::new(b.max.x.max(p.x.ceil()), b.max.y.max(p.y.ceil()));
+    }
+    b
 }
 
 pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
@@ -79,13 +74,12 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     let drawable = geom::drawable_bounds(c);
     let stage_rect = v.bounds_to_screen(stage);
 
-    // Backstage.
-    if backstage_visible(c) {
-        let faint = !backstage_on(c);
+    // Backstage: the outer cells of the grid, the floor covers the rest.
+    let backstage_on = geom::backstage_on(c);
+    if backstage_on {
         let r = v.bounds_to_screen(drawable);
-        let fill = if faint { theme::BACKSTAGE.gamma_multiply(0.6) } else { theme::BACKSTAGE };
-        painter.rect_filled(r, 4.0, fill);
-        hatch(painter, r, if faint { 0.35 } else { 0.7 });
+        painter.rect_filled(r, 4.0, theme::BACKSTAGE);
+        hatch(painter, r, 0.7);
         painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
     }
 
@@ -95,7 +89,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     // Background.
     if let Some(bg) = &c.stage_background {
         let alpha = bg.alpha.clamp(0.0, 1.0) as f32;
-        let target = if !bg.is_backstage_separated && backstage_on(c) { drawable } else { stage };
+        let target = if !bg.is_backstage_separated && backstage_on { drawable } else { stage };
         let builtin = bg.file.as_ref().and_then(|f| f.standard_background_value.as_deref());
         if let Some(img) = s.background {
             paint_image(painter, v, target, img, StageAspectRatio::parse(&bg.aspect_ratio), alpha);
@@ -104,9 +98,9 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
         }
     }
 
-    paint_grid(painter, c, v, stage);
+    paint_grid(painter, c, v, drawable, stage);
     painter.rect_stroke(stage_rect, 2.0, Stroke::new(1.5, theme::STAGE_EDGE), StrokeKind::Middle);
-    paint_edge_labels(painter, c, v, stage, if backstage_visible(c) { drawable } else { stage });
+    paint_edge_labels(painter, c, v, stage, drawable);
 
     // Props.
     for (i, p) in s.props.iter().enumerate() {
@@ -298,38 +292,43 @@ fn hatch(painter: &Painter, r: Rect, strength: f32) {
     }
 }
 
-fn paint_grid(painter: &Painter, c: &Choreography, v: &View, stage: Bounds) {
+/// Grid lines over the whole `grid` (backstage cells included); the centre
+/// line runs through the middle of the `stage`.
+fn paint_grid(painter: &Painter, c: &Choreography, v: &View, grid: Bounds, stage: Bounds) {
     let set = &c.settings;
     let line = |a: P, b: P, col: Color32, w: f32| {
         painter.line_segment([v.to_screen(a), v.to_screen(b)], Stroke::new(w, col));
     };
-    let (w, h) = (stage.width(), stage.height());
+    let (x0, y0, x1, y1) = (grid.min.x, grid.min.y, grid.max.x, grid.max.y);
     if set.is_subdivisions_shown && v.scale >= 10.0 {
-        let mut x = 0.5;
-        while x < w {
-            if x.fract() != 0.0 {
-                line(P::new(x, 0.0), P::new(x, h), theme::GRID_SUB, 1.0);
+        let mut x = x0 + 0.5;
+        while x < x1 {
+            if (x - x0).fract() != 0.0 {
+                line(P::new(x, y0), P::new(x, y1), theme::GRID_SUB, 1.0);
             }
             x += 0.5;
         }
-        let mut y = 0.5;
-        while y < h {
-            if y.fract() != 0.0 {
-                line(P::new(0.0, y), P::new(w, y), theme::GRID_SUB, 1.0);
+        let mut y = y0 + 0.5;
+        while y < y1 {
+            if (y - y0).fract() != 0.0 {
+                line(P::new(x0, y), P::new(x1, y), theme::GRID_SUB, 1.0);
             }
             y += 0.5;
         }
     }
     if set.is_grid_shown {
-        for x in 1..(w.ceil() as i64) {
-            line(P::new(x as f64, 0.0), P::new(x as f64, h), theme::GRID, 1.0);
+        for i in 1..(grid.width().ceil() as i64) {
+            let x = x0 + i as f64;
+            line(P::new(x, y0), P::new(x, y1), theme::GRID, 1.0);
         }
-        for y in 1..(h.ceil() as i64) {
-            line(P::new(0.0, y as f64), P::new(w, y as f64), theme::GRID, 1.0);
+        for i in 1..(grid.height().ceil() as i64) {
+            let y = y0 + i as f64;
+            line(P::new(x0, y), P::new(x1, y), theme::GRID, 1.0);
         }
     }
     // Centre line, always faintly visible: the reference for distance marks.
-    line(P::new(w / 2.0, 0.0), P::new(w / 2.0, h), theme::GRID_CENTER, 1.5);
+    let mid = stage.center().x;
+    line(P::new(mid, stage.min.y), P::new(mid, stage.max.y), theme::GRID_CENTER, 1.5);
 }
 
 /// Text centred at `pos`, rotated by `angle` radians (clockwise).
@@ -345,7 +344,7 @@ fn fmt_mark(d: f64) -> String {
 
 fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bounds, outer: Bounds) {
     let set = &c.settings;
-    let w = stage.width();
+    let mid_x = stage.center().x;
     // Unit screen directions of stage "front" (+y, towards the audience) and
     // "stage right" (+x).
     let front = v.vec_to_screen(P::new(0.0, 1.0)).normalized();
@@ -353,9 +352,10 @@ fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bound
     let mut front_offset = 10.0;
     if set.is_distance_marks_shown {
         let size = (v.scale * 0.32).clamp(9.0, 13.0);
-        for x in 0..=(w.floor() as i64) {
-            let d = (x as f64 - w / 2.0).abs();
-            let pos = v.to_screen(P::new(x as f64, outer.max.y)) + front * 9.0;
+        for i in 0..=(stage.width().floor() as i64) {
+            let x = stage.min.x + i as f64;
+            let d = (x - mid_x).abs();
+            let pos = v.to_screen(P::new(x, outer.max.y)) + front * 9.0;
             painter.text(pos, Align2::CENTER_CENTER, fmt_mark(d), FontId::monospace(size), theme::TEXT_WEAK);
         }
         front_offset += 14.0;
@@ -591,23 +591,15 @@ mod tests {
     }
 
     #[test]
-    fn fit_includes_backstage_only_when_needed() {
+    fn fit_is_the_grid_plus_stray_dancers() {
         let mut c = Choreography::new("t", "id", 0);
-        assert_eq!(fit_bounds(&c), geom::stage_bounds(&c));
-        c.settings.is_backstage_shown = true;
         assert_eq!(fit_bounds(&c), geom::drawable_bounds(&c));
-        c.settings.is_backstage_shown = false;
-        c.add_dancer(arrus_core::Unit::at(-1.5, 3.0));
-        assert_eq!(fit_bounds(&c), geom::drawable_bounds(&c));
-        assert_eq!(dancer_radius(&c), 0.35);
-    }
-
-    #[test]
-    fn fit_includes_backstage_set_up_in_the_file() {
-        // As in an ArrangeUs export: a back backstage, `isBackstageShown` false.
-        let mut c = Choreography::new("t", "id", 0);
+        // The backstage is inside the grid: the fit does not grow.
         c.grid_size.backstage.back = 2;
-        assert!(!c.settings.is_backstage_shown);
         assert_eq!(fit_bounds(&c), geom::drawable_bounds(&c));
+        // A dancer outside the grid (older web documents) stays in view.
+        c.add_dancer(arrus_core::Unit::at(-1.5, 3.0));
+        assert_eq!(fit_bounds(&c).min, P::new(-2.0, 0.0));
+        assert_eq!(dancer_radius(&c), 0.35);
     }
 }

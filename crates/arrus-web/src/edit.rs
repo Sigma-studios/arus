@@ -170,14 +170,14 @@ pub const PALETTE: [i64; 10] = [
 pub fn free_spot(c: &Choreography, f: usize) -> P {
     let stage = geom::stage_bounds(c);
     let taken = formation_positions(c, f);
-    let start = P::new(geom::snap(stage.width() / 2.0, 1.0), 1.0f64.min(stage.height()));
+    let start = P::new(geom::snap(stage.center().x, 1.0), stage.min.y + 1.0f64.min(stage.height()));
     let free = |p: P| taken.iter().all(|(_, q)| geom::len(geom::sub(p, *q)) >= 0.99);
     // Spiral-ish search over whole cells, nearest first.
     let mut candidates: Vec<P> = Vec::new();
     let (w, h) = (stage.width() as i64, stage.height() as i64);
     for y in 0..=h {
         for x in 0..=w {
-            candidates.push(P::new(x as f64, y as f64));
+            candidates.push(P::new(stage.min.x + x as f64, stage.min.y + y as f64));
         }
     }
     candidates.sort_by(|a, b| {
@@ -210,9 +210,9 @@ pub fn line_up(c: &Choreography, n: usize) -> Vec<P> {
     let mut out = Vec::with_capacity(n);
     for r in 0..rows {
         let in_row = (n - r * per_row).min(per_row);
-        let y = (stage.height() / 2.0 - (rows as f64 - 1.0) * 0.75 + r as f64 * 1.5).max(0.0);
+        let y = (stage.center().y - (rows as f64 - 1.0) * 0.75 + r as f64 * 1.5).max(stage.min.y);
         for k in 0..in_row {
-            let x = stage.width() / 2.0 + (k as f64 - (in_row as f64 - 1.0) / 2.0) * 1.5;
+            let x = stage.center().x + (k as f64 - (in_row as f64 - 1.0) / 2.0) * 1.5;
             out.push(geom::snap_pos(P::new(x, y), 0.5));
         }
     }
