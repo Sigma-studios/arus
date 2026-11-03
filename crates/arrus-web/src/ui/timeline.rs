@@ -16,6 +16,10 @@ const NO_MUSIC_EXPORT: &str = "The ArrangeUs phone app doesn't export music, so 
                                Playback then follows the music.";
 
 pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
+    if ed.compact {
+        show_compact(ed, ui);
+        return None;
+    }
     let mut action = None;
     let compact = ed.compact;
     egui::Panel::bottom("timeline")
@@ -92,6 +96,40 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
     action
 }
 
+/// Phone layout: one slim row of transport, time and formation, then a thin
+/// timeline. Music is managed on a computer.
+fn show_compact(ed: &mut Editor, ui: &mut Ui) {
+    egui::Panel::bottom("timeline")
+        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(10, 6)))
+        .show(ui, |ui| {
+            ui.spacing_mut().interact_size.y = 30.0;
+            ui.spacing_mut().button_padding = vec2(6.0, 4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let size = vec2(38.0, 30.0);
+                if transport_button(ui, size, Icon::Prev, None).clicked() {
+                    ed.prev_formation();
+                }
+                let icon = if ed.playing { Icon::Pause } else { Icon::Play };
+                if transport_button(ui, size, icon, Some(theme::ACCENT)).clicked() {
+                    ed.toggle_play();
+                }
+                if transport_button(ui, size, Icon::Next, None).clicked() {
+                    ed.next_formation();
+                }
+                ui.label(
+                    RichText::new(format!("{} / {}", util::fmt_time(ed.t), util::fmt_time(ed.timeline_len())))
+                        .monospace()
+                        .size(12.5)
+                        .color(theme::TEXT_WEAK),
+                );
+                ui.add(egui::Label::new(RichText::new(formation_label(ed)).size(13.5)).truncate());
+            });
+            ui.add_space(8.0);
+            bar(ed, ui);
+        });
+}
+
 fn formation_label(ed: &Editor) -> String {
     match timeline::phase_at(&ed.doc, ed.t, ed.easing) {
         Some(Phase::Transition { from, to, .. }) => format!("Transition {} → {}", from + 1, to + 1),
@@ -149,7 +187,7 @@ fn music_label(ui: &mut Ui, name: &str, bytes: u64) {
 }
 
 fn bar(ed: &mut Editor, ui: &mut Ui) {
-    let h = if ed.compact { 54.0 } else { 42.0 };
+    let h = if ed.compact { 30.0 } else { 42.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click_and_drag());
     let len = ed.timeline_len();
     let p = ui.painter_at(rect.expand(8.0));

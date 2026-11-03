@@ -642,6 +642,9 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.update_background(&app.net);
 
     toolbar(ed, app, ui);
+    if ed.compact {
+        tool_row(ed, ui);
+    }
     match timeline_ui::show(ed, ui) {
         Some(timeline_ui::MusicAction::Upload) => upload_music(ed, app),
         Some(timeline_ui::MusicAction::Remove) => ed.modal = Some(EdModal::RemoveMusic),
@@ -745,24 +748,12 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                 }
                 if ed.compact {
-                    if ui.add(egui::Button::selectable(ed.show_formations, "Formations")).clicked() {
-                        ed.show_formations = !ed.show_formations;
-                        // One panel at a time: a phone has no room for both.
-                        ed.show_inspector &= !ed.show_formations;
-                    }
-                    if ed.can_edit
-                        && ui
-                            .add(egui::Button::selectable(ed.show_inspector, "Details"))
-                            .on_hover_text("Selected dancer or prop, or the choreography settings")
-                            .clicked()
-                    {
-                        ed.show_inspector = !ed.show_inspector;
-                        ed.show_formations &= !ed.show_inspector;
-                    }
-                    if !ed.can_edit {
-                        widgets::badge(ui, "View only", theme::TEXT_WEAK);
-                    }
+                    // Phone: back, name, and undo / redo / save. The tools
+                    // live in the row at the bottom (see `tool_row`).
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if !ed.can_edit {
+                            widgets::badge(ui, "View only", theme::TEXT_WEAK);
+                        }
                         if ed.can_edit {
                             let save_btn = ui.add_enabled_ui(ed.dirty && !ed.saving, |ui| widgets::primary_button(ui, "Save"));
                             if save_btn.inner.clicked() {
@@ -819,18 +810,87 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         });
 }
 
-fn formations_panel(ed: &mut Editor, ui: &mut Ui) {
-    let panel = egui::Panel::left("formations")
+/// Phone layout: a resizable sheet above the timeline (formations or details).
+pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
+    let h = ui.ctx().content_rect().height();
+    egui::Panel::bottom(id.to_owned())
         .resizable(true)
-        .default_size(250.0)
-        .size_range(200.0..=420.0)
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)));
+        .default_size(h * 0.4)
+        .size_range(140.0..=(h * 0.7).max(160.0))
+        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+}
+
+/// Phone layout: every tool in one row at the bottom of the screen, in its
+/// own panel (not over the stage) so swiping it scrolls the row instead of
+/// moving the stage.
+fn tool_row(ed: &mut Editor, ui: &mut Ui) {
+    egui::Panel::bottom("tools")
+        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 6)))
+        .show(ui, |ui| {
+            ui.spacing_mut().interact_size.y = 34.0;
+            ui.spacing_mut().button_padding = vec2(10.0, 6.0);
+            ScrollArea::horizontal().id_salt("tools_scroll").show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.add(egui::Button::selectable(ed.show_formations, "Formations")).clicked() {
+                        ed.show_formations = !ed.show_formations;
+                        // One sheet at a time: a phone has no room for both.
+                        ed.show_inspector &= !ed.show_formations;
+                    }
+                    if ed.can_edit {
+                        let n = match &ed.sel {
+                            Selection::Dancers(s) => s.len(),
+                            Selection::Prop(_) => 1,
+                            Selection::None => 0,
+                        };
+                        let label = if n > 0 { format!("Details ({n})") } else { "Details".to_owned() };
+                        if ui.add(egui::Button::selectable(ed.show_inspector, label)).clicked() {
+                            ed.show_inspector = !ed.show_inspector;
+                            ed.show_formations &= !ed.show_inspector;
+                        }
+                        ui.separator();
+                        if ui.button("+ Dancer").clicked() {
+                            ed.pause();
+                            ed.add_dancer();
+                        }
+                        ui.menu_button("+ Prop", |ui| {
+                            for &k in arrus_core::PropType::ALL {
+                                if ui.button(geom::prop_label(k)).clicked() {
+                                    ed.pause();
+                                    ed.add_prop(k);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.toggle_value(&mut ed.multi_select, "Select")
+                            .on_hover_text("Tap dancers to add or remove them; drag on empty space to select with a box");
+                    }
+                    ui.separator();
+                    if ui.button("Fit").clicked() {
+                        ed.need_fit = true;
+                    }
+                    let mut inv = ed.doc.settings.is_scene_directions_inverted;
+                    if ui.toggle_value(&mut inv, "Backstage view").changed() {
+                        let mut s = ed.doc.settings.clone();
+                        s.is_scene_directions_inverted = inv;
+                        ed.set_settings(s, None);
+                    }
+                });
+            });
+        });
+}
+
+fn formations_panel(ed: &mut Editor, ui: &mut Ui) {
     if ed.compact {
         let mut open = ed.show_formations;
-        panel.show_collapsible(ui, &mut open, |ui| formations_ui(ed, ui));
+        sheet("formations_sheet", ui).show_collapsible(ui, &mut open, |ui| formations_ui(ed, ui));
         ed.show_formations = open;
     } else {
-        panel.show(ui, |ui| formations_ui(ed, ui));
+        egui::Panel::left("formations")
+            .resizable(true)
+            .default_size(250.0)
+            .size_range(200.0..=420.0)
+            .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+            .show(ui, |ui| formations_ui(ed, ui));
     }
 }
 

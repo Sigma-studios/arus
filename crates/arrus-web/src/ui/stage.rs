@@ -47,7 +47,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let resized = (visible.size() - ed.last_stage_size).length() > 1.0;
     ed.last_stage_size = visible.size();
     // Room for the floating toolbar at the top.
-    let fit_rect = Rect::from_min_max(visible.min + vec2(0.0, 40.0), visible.max);
+    let top = if ed.compact { 0.0 } else { 40.0 };
+    let fit_rect = Rect::from_min_max(visible.min + vec2(0.0, top), visible.max);
     let margin = if ed.compact { 34.0 } else { FIT_MARGIN };
     if ed.view.is_none() || ed.need_fit || (resized && !ed.view_moved) {
         ed.view = Some(View::fit(fit_rect, paint::fit_bounds(&ed.doc), margin, inverted));
@@ -361,8 +362,12 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     overlay(ed, ui, visible);
 }
 
-/// Floating tools in the stage's top-left corner.
+/// Floating tools in the stage's top-left corner. Phones get them in the
+/// editor's tool row instead (nothing floats over the stage there).
 fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
+    if ed.compact {
+        return;
+    }
     let bar = Rect::from_min_size(rect.min + vec2(10.0, 10.0), vec2(rect.width() - 20.0, 36.0));
     let mut child = ui.new_child(UiBuilder::new().max_rect(bar).layout(Layout::left_to_right(Align::Center)));
     let ui = &mut child;
@@ -418,19 +423,6 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
                 });
             });
         });
-        if ed.compact {
-            ui.add_space(8.0);
-            frame.show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.toggle_value(&mut ed.multi_select, "Multi-select")
-                        .on_hover_text("Tap dancers to add or remove them; drag on empty space to select with a box");
-                    if !matches!(ed.sel, Selection::None) && !ed.show_inspector && ui.button("Details").clicked() {
-                        ed.show_inspector = true;
-                        ed.show_formations = false;
-                    }
-                });
-            });
-        }
         if let Some(s) = ed.sel.dancers() {
             ui.add_space(8.0);
             ui.label(RichText::new(format!("{} selected", s.len())).small().color(theme::TEXT_WEAK));
