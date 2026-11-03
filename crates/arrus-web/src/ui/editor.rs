@@ -74,6 +74,8 @@ pub struct Editor {
     /// "Next formation (outlines)": off whenever a choreography is opened and
     /// only for this screen (the file's own setting is kept as it is).
     pub show_next: bool,
+    /// "Paths to next formation": the same, for where each dancer goes next.
+    pub show_next_paths: bool,
     /// Touch: one-finger drags on empty space draw a selection box (instead
     /// of moving the view).
     pub multi_select: bool,
@@ -163,6 +165,7 @@ impl Editor {
             show_formations: !compact,
             show_inspector: false,
             show_next: false,
+            show_next_paths: false,
             multi_select: false,
             touch: false,
             gesture: false,

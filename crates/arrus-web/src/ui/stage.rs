@@ -351,7 +351,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
         background,
         handles: editing,
         playing: ed.playing,
-        next_outlines: ed.show_next,
+        next_ghosts: ed.show_next,
+        next_paths: ed.show_next_paths,
         remotes: &remotes,
     };
     paint::paint_stage(&painter, &scene);

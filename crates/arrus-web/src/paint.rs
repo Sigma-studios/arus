@@ -34,8 +34,10 @@ pub struct Scene<'a> {
     pub handles: bool,
     /// Hide editing-only overlays while playing.
     pub playing: bool,
-    /// Outlines of the next formation (a per-screen view option).
-    pub next_outlines: bool,
+    /// The next formation as ghosts (a per-screen view option).
+    pub next_ghosts: bool,
+    /// Paths from this formation to the next (a per-screen view option).
+    pub next_paths: bool,
     /// Dancers other people (on this formation) have selected or are moving.
     pub remotes: &'a [Remote],
 }
@@ -147,17 +149,16 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     let next = c.formations.get(f + 1);
     let current = c.formations.get(f);
 
-    // Transition paths: previous formation -> this one.
-    if set.is_transition_paths_shown
-        && let (Some(a), Some(b)) = (prev, current)
-    {
+    // Transition paths: dashed arrows from where each dancer is in `a` to
+    // where it is in `b`.
+    let paths = |a: &arrus_core::Formation, b: &arrus_core::Formation, opacity: f32, dash: f32| {
         for (ua, ub) in a.units.iter().zip(&b.units) {
             let (pa, pb) = (v.to_screen(ua.position), v.to_screen(ub.position));
             if (pb - pa).length() < 2.0 {
                 continue;
             }
-            let col = theme::argb(ub.color, 0.55);
-            painter.extend(Shape::dashed_line(&[pa, pb], Stroke::new(1.5, col), 6.0, 4.0));
+            let col = theme::argb(ub.color, opacity);
+            painter.extend(Shape::dashed_line(&[pa, pb], Stroke::new(1.5, col), dash, 4.0));
             let dir = (pb - pa).normalized();
             let tip = pb - dir * rpx;
             let side = dir.rot90() * 4.0;
@@ -167,6 +168,18 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
                 Stroke::NONE,
             ));
         }
+    };
+    // Previous formation -> this one (where each dancer comes from).
+    if set.is_transition_paths_shown
+        && let (Some(a), Some(b)) = (prev, current)
+    {
+        paths(a, b, 0.55, 6.0);
+    }
+    // This one -> the next (where each dancer goes; shorter dashes).
+    if s.next_paths
+        && let (Some(a), Some(b)) = (current, next)
+    {
+        paths(a, b, 0.45, 3.0);
     }
 
     // Ghosts (previous) and future (next) formations, faintly.
@@ -180,20 +193,10 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     {
         ghost(&a.units, 0.22);
     }
-    if s.next_outlines
+    if s.next_ghosts
         && let Some(n) = next
     {
-        for u in &n.units {
-            draw_shape(
-                painter,
-                v,
-                u.position,
-                radius,
-                u.shape(),
-                Color32::TRANSPARENT,
-                Stroke::new(1.5, theme::argb(u.color, 0.45)),
-            );
-        }
+        ghost(&n.units, 0.22);
     }
 
     // Dancers.

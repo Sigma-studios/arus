@@ -305,8 +305,10 @@ fn size_value(v: &mut f64) -> egui::DragValue<'_> {
     egui::DragValue::new(v).speed(0.05).range(geom::MIN_PROP_SIZE..=200.0).max_decimals(2)
 }
 
-/// The view toggles (shared by writers and viewers).
-fn view_toggles(ui: &mut Ui, s: &mut Settings) -> bool {
+/// The view toggles (shared by writers and viewers). Returns whether a
+/// setting of the choreography changed; `next` / `next_paths` are this
+/// screen's own options.
+fn view_toggles(ui: &mut Ui, s: &mut Settings, next: &mut bool, next_paths: &mut bool) -> bool {
     let mut ch = false;
     let mut cb = |ui: &mut Ui, v: &mut bool, label: &str, tip: &str| {
         let r = ui.checkbox(v, label);
@@ -321,8 +323,11 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings) -> bool {
     cb(ui, &mut s.is_backstage_shown, "Backstage", "Turn the outer cells of the grid into backstage (always on when the stage settings set a backstage)");
     cb(ui, &mut s.is_dancer_names_shown, "Dancer names", "");
     cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Small numbers next to dancers whose label is not their number");
+    const LOCAL: &str = "Only on this screen; off each time you open a choreography";
     cb(ui, &mut s.is_ghost_dancers_shown, "Previous formation (ghosts)", "");
-    cb(ui, &mut s.is_transition_paths_shown, "Transition paths", "Where each dancer comes from");
+    ui.checkbox(next, "Next formation (ghosts)").on_hover_text(LOCAL);
+    cb(ui, &mut s.is_transition_paths_shown, "Paths from previous formation", "Where each dancer comes from");
+    ui.checkbox(next_paths, "Paths to next formation").on_hover_text(format!("Where each dancer goes next. {LOCAL}"));
     cb(ui, &mut s.is_additional_indicators_shown, "Additional indicators", "Coordinates while dragging dancers");
     ch
 }
@@ -374,10 +379,8 @@ fn settings(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     }
 
     widgets::section(ui, if can { "View" } else { "View (only on this screen)" });
-    ui.checkbox(&mut ed.show_next, "Next formation (outlines)")
-        .on_hover_text("Only on this screen; off each time you open a choreography");
     let mut s = ed.doc.settings.clone();
-    if view_toggles(ui, &mut s) {
+    if view_toggles(ui, &mut s, &mut ed.show_next, &mut ed.show_next_paths) {
         let refit = s.is_backstage_shown != ed.doc.settings.is_backstage_shown;
         ed.set_settings(s, None);
         if refit {
