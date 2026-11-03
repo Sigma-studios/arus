@@ -24,17 +24,30 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         .default_size(300.0)
         .size_range(260.0..=440.0)
         .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
-        .show(ui, |ui| {
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                match ed.sel.clone() {
-                    Selection::Dancers(s) if s.len() == 1 => dancer(ed, ui, *s.first().unwrap_or(&0)),
-                    Selection::Dancers(s) if !s.is_empty() => dancers(ed, ui, &s),
-                    Selection::Prop(i) => prop(ed, ui, i),
-                    _ => settings(ed, app, ui),
-                }
-            });
-        });
+        .show(ui, |ui| body(ed, app, ui));
+}
+
+/// Phone layout: the same content as a resizable sheet at the bottom.
+pub fn show_sheet(ed: &mut Editor, app: &mut App, ui: &mut Ui, open: &mut bool) {
+    let h = ui.ctx().content_rect().height();
+    egui::Panel::bottom("inspector_sheet")
+        .resizable(true)
+        .default_size(h * 0.4)
+        .size_range(140.0..=(h * 0.75).max(160.0))
+        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+        .show_collapsible(ui, open, |ui| body(ed, app, ui));
+}
+
+fn body(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
+    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        match ed.sel.clone() {
+            Selection::Dancers(s) if s.len() == 1 => dancer(ed, ui, *s.first().unwrap_or(&0)),
+            Selection::Dancers(s) if !s.is_empty() => dancers(ed, ui, &s),
+            Selection::Prop(i) => prop(ed, ui, i),
+            _ => settings(ed, app, ui),
+        }
+    });
 }
 
 fn to_c32(v: i64) -> Color32 {

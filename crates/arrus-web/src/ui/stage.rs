@@ -70,6 +70,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
             i.pointer.button_down(PointerButton::Secondary),
         )
     });
+    // Touch has no Shift key: the multi-select toggle stands in for it.
+    let shift = shift || ed.multi_select;
     if resp.contains_pointer() || touch.is_some() {
         if let Some(t) = &touch {
             view.zoom_at(t.center_pos, t.zoom_delta);
@@ -155,7 +157,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     // Start of a drag.
     if resp.drag_started() {
         let origin = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()).unwrap_or(rect.center());
-        let pan = middle || secondary || ed.space_down || !editing;
+        let touching = ui.input(|i| i.any_touches());
+        let pan = middle || secondary || ed.space_down || !editing || touch.is_some();
         if ed.space_down {
             ed.space_pan_used = true;
         }
@@ -189,6 +192,9 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
                     let start = edit::props(&ed.doc, f).get(idx).map(|p| p.position).unwrap_or(w);
                     Drag::Prop { idx, start, pointer_start: w, moved: false }
                 }
+                // On a touch screen one finger on empty space pans; selecting
+                // with a box needs the multi-select toggle.
+                Hit::None if touching && !ed.multi_select => Drag::Pan,
                 Hit::None => {
                     let base = if shift { ed.sel.dancers().cloned().unwrap_or_default() } else { BTreeSet::new() };
                     if !shift {
@@ -204,7 +210,9 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     if let Some(mut drag) = ed.drag.take() {
         let pointer = resp.interact_pointer_pos().or(hover);
         let mut keep = resp.dragged() || resp.drag_started();
-        if let (true, Some(pp)) = (resp.dragged(), pointer) {
+        // A second finger turns the gesture into pinch zoom: stop editing.
+        let pinching = touch.is_some() && !matches!(drag, Drag::Pan);
+        if let (true, Some(pp), false) = (resp.dragged(), pointer, pinching) {
             let w = view.stage_at(pp);
             match &mut drag {
                 Drag::Pan => {
@@ -410,6 +418,19 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
                 });
             });
         });
+        if ed.compact {
+            ui.add_space(8.0);
+            frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.toggle_value(&mut ed.multi_select, "Multi-select")
+                        .on_hover_text("Tap dancers to add or remove them; drag on empty space to select with a box");
+                    if !matches!(ed.sel, Selection::None) && !ed.show_inspector && ui.button("Details").clicked() {
+                        ed.show_inspector = true;
+                        ed.show_formations = false;
+                    }
+                });
+            });
+        }
         if let Some(s) = ed.sel.dancers() {
             ui.add_space(8.0);
             ui.label(RichText::new(format!("{} selected", s.len())).small().color(theme::TEXT_WEAK));

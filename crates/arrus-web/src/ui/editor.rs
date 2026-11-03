@@ -65,6 +65,10 @@ pub struct Editor {
     saving: bool,
     pub music_busy: bool,
     pub show_formations: bool,
+    /// Phone layout: the inspector sheet at the bottom is open.
+    pub show_inspector: bool,
+    /// Touch stand-in for Shift: taps toggle dancers, empty drags box-select.
+    pub multi_select: bool,
     /// egui time of this frame.
     pub now: f64,
 }
@@ -145,6 +149,8 @@ impl Editor {
             saving: false,
             music_busy: false,
             show_formations: !compact,
+            show_inspector: false,
+            multi_select: false,
             now: 0.0,
         }
     }
@@ -644,6 +650,10 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     formations_panel(ed, ui);
     if !ed.compact {
         inspector::show(ed, app, ui);
+    } else if ed.can_edit {
+        let mut open = ed.show_inspector;
+        inspector::show_sheet(ed, app, ui, &mut open);
+        ed.show_inspector = open;
     }
     egui::CentralPanel::default().frame(Frame::new().fill(theme::BG)).show(ui, |ui| stage::show(ed, ui));
     modals(ed, app, ui.ctx());
@@ -735,26 +745,49 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                 }
                 if ed.compact {
-                    let label = if ed.show_formations { "Hide formations" } else { "Formations" };
-                    if ui.add(egui::Button::selectable(ed.show_formations, label)).clicked() {
+                    if ui.add(egui::Button::selectable(ed.show_formations, "Formations")).clicked() {
                         ed.show_formations = !ed.show_formations;
+                        // One panel at a time: a phone has no room for both.
+                        ed.show_inspector &= !ed.show_formations;
                     }
-                }
-                if ed.compact {
-                    widgets::badge(ui, "View only", theme::TEXT_WEAK);
-                    ui.add(egui::Label::new(RichText::new(&ed.doc.name).strong().size(16.0)).truncate());
+                    if ed.can_edit
+                        && ui
+                            .add(egui::Button::selectable(ed.show_inspector, "Details"))
+                            .on_hover_text("Selected dancer or prop, or the choreography settings")
+                            .clicked()
+                    {
+                        ed.show_inspector = !ed.show_inspector;
+                        ed.show_formations &= !ed.show_inspector;
+                    }
+                    if !ed.can_edit {
+                        widgets::badge(ui, "View only", theme::TEXT_WEAK);
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ed.can_edit {
+                            let save_btn = ui.add_enabled_ui(ed.dirty && !ed.saving, |ui| widgets::primary_button(ui, "Save"));
+                            if save_btn.inner.clicked() {
+                                save(ed, app);
+                            }
+                            if ui.add_enabled(ed.can_redo(), egui::Button::new("↷")).clicked() {
+                                ed.redo();
+                            }
+                            if ui.add_enabled(ed.can_undo(), egui::Button::new("↶")).clicked() {
+                                ed.undo();
+                            }
+                            if ed.saving {
+                                ui.spinner();
+                            }
+                        }
+                        let name = if ed.dirty { format!("● {}", ed.doc.name) } else { ed.doc.name.clone() };
+                        ui.add(egui::Label::new(RichText::new(name).strong().size(16.0)).truncate());
+                    });
                     return;
                 }
                 ui.add_space(6.0);
                 ui.label(RichText::new(&ed.doc.name).strong().size(16.0));
                 if !ed.can_edit {
-                    widgets::badge(ui, "View only", theme::TEXT_WEAK).on_hover_text(
-                        if app.me.as_ref().is_some_and(|m| m.can_write) {
-                            "Editing is available on a computer with a wider window."
-                        } else {
-                            "You can view this choreography; ask your admin for write access to edit."
-                        },
-                    );
+                    widgets::badge(ui, "View only", theme::TEXT_WEAK)
+                        .on_hover_text("You can view this choreography; ask your admin for write access to edit.");
                 } else if ed.saving {
                     ui.spinner();
                     ui.label(RichText::new("Saving…").color(theme::TEXT_WEAK));

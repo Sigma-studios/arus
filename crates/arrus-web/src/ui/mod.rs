@@ -59,7 +59,7 @@ pub struct App {
     pub alert: Option<Alert>,
     /// Coarse pointer (phone / tablet).
     touch: bool,
-    /// Touch device or narrow viewport: view-only layout.
+    /// Touch device or narrow viewport: phone layout.
     pub compact: bool,
     styled_for: Option<bool>,
     /// Screen to go to once the user confirms leaving unsaved changes.
@@ -123,9 +123,9 @@ impl App {
         self.me.as_ref().is_some_and(|m| m.role == Role::Admin)
     }
 
-    /// May edit (has write access and is not on a phone/tablet layout).
+    /// May edit (has write access), on any device.
     pub fn can_edit(&self) -> bool {
-        self.me.as_ref().is_some_and(|m| m.can_write) && !self.compact
+        self.me.as_ref().is_some_and(|m| m.can_write)
     }
 
     pub fn team_name(&self) -> Option<String> {
