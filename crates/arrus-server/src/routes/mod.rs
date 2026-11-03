@@ -16,6 +16,8 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::trace::TraceLayer;
 
 use crate::error::{Error, Result};
@@ -50,6 +52,11 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(web::logout))
         .route("/healthz", get(web::healthz))
         .fallback(web::fallback)
+        // The wasm client shrinks from ~4.7 MB to ~1.7 MB; audio is left alone (already
+        // compressed, and seeking uses byte ranges of the original).
+        .layer(CompressionLayer::new().compress_when(
+            DefaultPredicate::new().and(NotForContentType::const_new("audio/")),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
