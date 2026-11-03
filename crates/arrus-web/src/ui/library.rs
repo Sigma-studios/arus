@@ -1,6 +1,6 @@
 //! The team's choreographies: open, export, delete, new, import.
 
-use arrus_api::{ChoreographyId, ChoreographySummary, CreateChoreography, ImportResult, TeamId};
+use arrus_api::{ChoreographyId, ChoreographySummary, CreateChoreography, ImportResult, PatchChoreography, PatchOp, Saved, TeamId};
 use egui::{Align, Frame, Layout, Margin, RichText, ScrollArea, Ui};
 
 use super::widgets::{self, Choice};
@@ -16,6 +16,8 @@ pub struct Library {
     new_dialog: Option<NewDialog>,
     confirm_delete: Option<(ChoreographyId, String)>,
     import: Option<ImportReport>,
+    /// Renaming: the choreography, the name being typed, and whether it is being saved.
+    rename: Option<(ChoreographyId, String, bool)>,
 }
 
 struct NewDialog {
@@ -208,6 +210,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let now = web::now_secs();
             let mut open = None;
             let mut del = None;
+            let mut rename = None;
             ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 if compact {
                     for c in &items {
@@ -239,6 +242,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 }
                                 if ui.button("PDF").clicked() {
                                     web::download(&format!("/api/choreographies/{}/pdf", c.id));
+                                }
+                                if writer && ui.button("Rename").clicked() {
+                                    rename = Some((c.id, c.name.clone(), false));
                                 }
                             });
                         });
@@ -283,6 +289,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             if ui.button("PDF").on_hover_text("Download a PDF to share: one page per formation").clicked() {
                                 web::download(&format!("/api/choreographies/{}/pdf", c.id));
                             }
+                            if writer && ui.button("Rename").clicked() {
+                                rename = Some((c.id, c.name.clone(), false));
+                            }
                             if writer && ui.button(RichText::new("Delete").color(theme::ERROR)).clicked() {
                                 del = Some((c.id, c.name.clone()));
                             }
@@ -297,6 +306,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             if del.is_some() {
                 app.library.confirm_delete = del;
             }
+            if rename.is_some() {
+                app.library.rename = rename;
+            }
         });
 
     dialogs(app, &ctx);
@@ -307,7 +319,44 @@ fn updated(now: i64, c: &ChoreographySummary) -> String {
     format!("{when} by {}", c.updated_by)
 }
 
+/// Rename through the live-editing channel, so anyone with the choreography
+/// open sees the new name at once.
+fn rename(app: &mut App, id: ChoreographyId, name: String) {
+    let body = PatchChoreography {
+        session: format!("library-{}", web::random_uuid()),
+        batch: 1,
+        ops: vec![PatchOp::Set { path: vec!["name".into()], value: name.into() }],
+    };
+    app.net.spawn(async move {
+        let r = net::send::<_, Saved>("POST", &format!("/api/choreographies/{id}/patch"), &body).await;
+        move |app: &mut App| {
+            app.library.rename = None;
+            match r {
+                Ok(s) => {
+                    if let Some(c) = app.library.items.iter_mut().find(|c| c.id == id) {
+                        *c = s.summary;
+                    }
+                    app.toast("Renamed");
+                }
+                Err(e) => app.fail(e),
+            }
+        }
+    });
+}
+
 fn dialogs(app: &mut App, ctx: &egui::Context) {
+    if let Some((id, name, busy)) = &mut app.library.rename {
+        let id = *id;
+        match widgets::rename_dialog(ctx, "rename_choreo", name, *busy) {
+            Some(Some(new)) => {
+                *busy = true;
+                rename(app, id, new);
+            }
+            Some(None) => app.library.rename = None,
+            None => {}
+        }
+    }
+
     let mut action: Option<Option<(String, u32)>> = None;
     if let Some(d) = &mut app.library.new_dialog {
         let valid = !d.name.trim().is_empty() && !d.busy;

@@ -31,6 +31,8 @@ pub struct Snap {
 pub enum EdModal {
     RemoveDancers(BTreeSet<usize>),
     RemoveMusic,
+    /// The name being typed.
+    Rename(String),
 }
 
 pub struct Editor {
@@ -718,12 +720,12 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                         }
                         widgets::presence(ui, &ed.live.others(), 3);
                         save_status(ui, ed, true);
-                        ui.add(egui::Label::new(RichText::new(&ed.doc.name).strong().size(16.0)).truncate());
+                        name_label(ui, ed, true);
                     });
                     return;
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new(&ed.doc.name).strong().size(16.0));
+                name_label(ui, ed, false);
                 if !ed.can_edit {
                     widgets::badge(ui, "View only", theme::TEXT_WEAK)
                         .on_hover_text("You can view this choreography; ask your admin for write access to edit.");
@@ -752,6 +754,22 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 });
             });
         });
+}
+
+/// The choreography's name in the top bar; writers click it to rename.
+fn name_label(ui: &mut Ui, ed: &mut Editor, truncate: bool) {
+    let mut label = egui::Label::new(RichText::new(&ed.doc.name).strong().size(16.0));
+    if truncate {
+        label = label.truncate();
+    }
+    if !ed.can_edit {
+        ui.add(label);
+        return;
+    }
+    let r = ui.add(label.sense(Sense::click())).on_hover_cursor(egui::CursorIcon::Text).on_hover_text("Rename");
+    if r.clicked() {
+        ed.modal = Some(EdModal::Rename(ed.doc.name.clone()));
+    }
 }
 
 /// Download the PDF (of what the server has: wait for pending changes first).
@@ -1080,8 +1098,20 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
 }
 
 fn modals(ed: &mut Editor, app: &mut App, ctx: &egui::Context) {
+    if let Some(EdModal::Rename(name)) = &mut ed.modal {
+        if let Some(r) = widgets::rename_dialog(ctx, "rename_editor", name, false) {
+            ed.modal = None;
+            if let Some(new) = r {
+                // An ordinary edit: undoable, saved and shown to the others live.
+                ed.edit(None, |d| d.name = new);
+            }
+        }
+        return;
+    }
     let Some(m) = ed.modal.take() else { return };
     let keep = match &m {
+        // Handled above.
+        EdModal::Rename(_) => false,
         EdModal::RemoveDancers(set) => {
             let n = set.len();
             let title = if n == 1 { "Remove this dancer?".to_owned() } else { format!("Remove {n} dancers?") };

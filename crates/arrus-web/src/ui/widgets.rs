@@ -103,6 +103,27 @@ pub enum Choice {
 
 /// A modal dialog with a title and custom body; returns the user's choice
 /// when one is made (Escape / backdrop click = cancel).
+/// "Rename choreography": `Some(Some(name))` to rename, `Some(None)` when
+/// cancelled, `None` while still open.
+pub fn rename_dialog(ctx: &egui::Context, id: &str, name: &mut String, busy: bool) -> Option<Option<String>> {
+    let valid = !name.trim().is_empty() && !busy;
+    let mut enter = false;
+    let choice = dialog(ctx, id, "Rename choreography", "Rename", false, valid, |ui| {
+        ui.label("New name");
+        let r = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+        enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if !r.has_focus() && !enter {
+            r.request_focus();
+        }
+    });
+    match choice {
+        Some(Choice::Confirm) => Some(Some(name.trim().to_owned())),
+        None if enter && valid => Some(Some(name.trim().to_owned())),
+        Some(Choice::Cancel) => Some(None),
+        None => None,
+    }
+}
+
 pub fn dialog(
     ctx: &egui::Context,
     id: &str,
