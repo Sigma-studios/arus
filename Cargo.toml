@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/arrus-core", "crates/arrus-api", "crates/arrus-server", "crates/arrus-web"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+repository = "https://github.com/Sigma-studios/arus"
+
+[workspace.dependencies]
+arrus-core = { path = "crates/arrus-core" }
+arrus-api = { path = "crates/arrus-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[profile.release.package.arrus-web]
+opt-level = "s"

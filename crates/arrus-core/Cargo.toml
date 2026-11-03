@@ -1,0 +1,12 @@
+[package]
+name = "arrus-core"
+description = "ArrangeUs .arrus/.aubkp files: format, typed model, timeline"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }

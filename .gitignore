@@ -1,0 +1,10 @@
+/target
+/target-web
+crates/arrus-web/dist
+.venv/
+__pycache__/
+*.pyc
+# the ArrangeUs file key: never committed (public repo). Set ARUS_FORMAT_KEY or keep it in this file.
+.arrus-key
+/data
+.DS_Store

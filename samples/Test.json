@@ -1,0 +1,195 @@
+{
+  "name": "Test",
+  "gridSize": {
+    "rows": 14,
+    "columns": 8,
+    "backstage": {
+      "sides": 2,
+      "back": 0,
+      "front": 0
+    }
+  },
+  "formations": [
+    {
+      "duration": 10.0,
+      "transitionDuration": 3.0,
+      "comments": [],
+      "units": [
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 1.0,
+            "y": 1.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 1.0,
+            "y": 2.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 1.0,
+            "y": 3.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 3.5,
+            "y": 3.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 3.0,
+            "y": 5.5
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 1.0,
+            "y": 6.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 1.0,
+            "y": 7.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 13.0,
+            "y": 1.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 13.0,
+            "y": 2.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 13.0,
+            "y": 3.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 13.0,
+            "y": 4.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        },
+        {
+          "dancer": {
+            "name": ""
+          },
+          "position": {
+            "x": 13.0,
+            "y": 5.0
+          },
+          "color": 4293471847,
+          "shape": "circle",
+          "shortName": null
+        }
+      ],
+      "props": [],
+      "color": 4293471847
+    }
+  ],
+  "lastEditTimestamp": 1793657954,
+  "creationTimestamp": 1793657942,
+  "id": "18806ebd-a946-42f1-a6b1-78f3b6238d9c",
+  "version": 8,
+  "descriptionText": null,
+  "settings": {
+    "isGridSnappingEnabled": true,
+    "isDancerNamesShown": true,
+    "isDancerIndexesShown": false,
+    "isGhostDancersShown": false,
+    "isAdditionalIndicatorsShown": true,
+    "isGridShown": true,
+    "isSceneDirectionsShown": true,
+    "isSceneDirectionsInverted": false,
+    "isFutureDancersShown": false,
+    "isTransitionPathsShown": false,
+    "dancerSizeMultiplier": 0.7,
+    "dancerLabelSizeMultiplier": 1.0,
+    "dancerFillStyle": "indexed",
+    "isBackstageShown": false,
+    "isDistanceMarksShown": false,
+    "isSubdivisionsShown": false
+  },
+  "musicData": null,
+  "isActive": true,
+  "isArchived": false,
+  "isDeleted": false,
+  "stageBackground": null
+}
