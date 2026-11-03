@@ -825,10 +825,10 @@ pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
 /// moving the stage.
 fn tool_row(ed: &mut Editor, ui: &mut Ui) {
     egui::Panel::bottom("tools")
-        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 6)))
+        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 8)))
         .show(ui, |ui| {
-            ui.spacing_mut().interact_size.y = 34.0;
-            ui.spacing_mut().button_padding = vec2(10.0, 6.0);
+            ui.spacing_mut().interact_size.y = 44.0;
+            ui.spacing_mut().button_padding = vec2(14.0, 9.0);
             ScrollArea::horizontal().id_salt("tools_scroll").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::selectable(ed.show_formations, "Formations")).clicked() {
