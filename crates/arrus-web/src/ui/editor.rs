@@ -77,6 +77,8 @@ pub struct Editor {
     pub multi_select: bool,
     /// A touch screen: taps add / remove dancers from the selection.
     pub touch: bool,
+    /// A drag is changing `doc` directly, frame by frame.
+    pub gesture: bool,
     /// egui time of this frame.
     pub now: f64,
 }
@@ -161,6 +163,7 @@ impl Editor {
             show_next: false,
             multi_select: false,
             touch: false,
+            gesture: false,
             now: 0.0,
         }
     }
@@ -197,15 +200,21 @@ impl Editor {
         self.sanitize();
     }
 
-    /// Start a drag gesture that mutates `doc` directly over several frames.
+    /// Start a drag gesture that mutates `doc` directly over several frames
+    /// (every frame of it counts as a change to save; see `live::sync`).
     pub fn begin_gesture(&mut self) {
         let (doc, bg, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
         self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone(), seq }, None, self.now);
         self.mark_dirty();
+        self.gesture = true;
     }
 
     pub fn end_gesture(&mut self) {
         self.undo.break_merge();
+        if std::mem::take(&mut self.gesture) {
+            // Save where the drag ended.
+            self.mark_dirty();
+        }
     }
 
     /// Change settings: an undoable edit for writers, a local view change for viewers.

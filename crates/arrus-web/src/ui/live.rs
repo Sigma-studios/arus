@@ -223,6 +223,16 @@ pub fn sync(ed: &mut Editor, app: &mut App) {
     let now = ed.now;
     open_stream(ed, app, id, now);
     send_presence(ed, app, id, now);
+    // A drag changes the document every frame without going through
+    // `Editor::edit`: keep counting it as changed (sent at least every
+    // MAX_DELAY), and once more when it ends, however it ends.
+    if ed.gesture {
+        if ed.drag.is_none() {
+            ed.end_gesture();
+        } else {
+            ed.live.note_change(now);
+        }
+    }
     if ed.live.changed && (now - ed.live.last_change >= DEBOUNCE || now - ed.live.last_collect >= MAX_DELAY) {
         ed.collect();
     }
