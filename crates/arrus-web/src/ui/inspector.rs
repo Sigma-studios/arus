@@ -311,7 +311,7 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings) -> bool {
     cb(ui, &mut s.is_distance_marks_shown, "Distance marks", "Cell numbers along the front edge, counted from the centre line");
     cb(ui, &mut s.is_scene_directions_shown, "Stage directions", "AUDIENCE / BACKSTAGE / STAGE LEFT / STAGE RIGHT");
     cb(ui, &mut s.is_scene_directions_inverted, "View from backstage", "Rotate the stage 180°");
-    cb(ui, &mut s.is_backstage_shown, "Backstage", "Show the off-stage area around the stage");
+    cb(ui, &mut s.is_backstage_shown, "Backstage", "Show the off-stage area around the stage (always shown when the stage settings set a backstage)");
     cb(ui, &mut s.is_dancer_names_shown, "Dancer names", "");
     cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Small numbers next to dancers whose label is not their number");
     cb(ui, &mut s.is_ghost_dancers_shown, "Previous formation (ghosts)", "");

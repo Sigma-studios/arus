@@ -64,6 +64,15 @@ pub fn drawable_bounds(c: &Choreography) -> Bounds {
     )
 }
 
+/// Whether the choreography sets up a backstage beyond the app's default
+/// (`sides: 2, back: 0, front: 0`). The ArrangeUs app shows such a backstage
+/// even when `isBackstageShown` is false in the file.
+pub fn backstage_configured(c: &Choreography) -> bool {
+    let b = &c.grid_size.backstage;
+    let d = arrus_core::BackstageSize::default();
+    b.back > d.back || b.front > d.front || b.sides > d.sides
+}
+
 /// Whether any dancer of any formation stands outside the stage proper.
 pub fn anyone_backstage(c: &Choreography) -> bool {
     let s = stage_bounds(c);
@@ -301,6 +310,17 @@ mod tests {
         assert_eq!(snap(-0.74, 0.5), -0.5);
         assert_eq!(snap(1.3, 0.0), 1.3);
         assert_eq!(snap_pos(P::new(1.1, 2.8), 1.0), P::new(1.0, 3.0));
+    }
+
+    #[test]
+    fn backstage_configured_beyond_app_default() {
+        let mut c = Choreography::new("t", "id", 0);
+        assert!(!backstage_configured(&c));
+        c.grid_size.backstage.back = 2;
+        assert!(backstage_configured(&c));
+        c.grid_size.backstage.back = 0;
+        c.grid_size.backstage.sides = 3;
+        assert!(backstage_configured(&c));
     }
 
     #[test]

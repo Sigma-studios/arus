@@ -56,9 +56,15 @@ pub fn dancer_radius(c: &Choreography) -> f64 {
     (c.settings.dancer_size_multiplier.clamp(0.1, 3.0)) / 2.0
 }
 
-/// Whether the backstage area should be drawn (shown, or someone is there).
+/// Whether the backstage is on: toggled on, or set up in the file (as the
+/// ArrangeUs app shows it).
+pub fn backstage_on(c: &Choreography) -> bool {
+    c.settings.is_backstage_shown || geom::backstage_configured(c)
+}
+
+/// Whether the backstage area should be drawn (on, or someone is there).
 pub fn backstage_visible(c: &Choreography) -> bool {
-    c.settings.is_backstage_shown || geom::anyone_backstage(c)
+    backstage_on(c) || geom::anyone_backstage(c)
 }
 
 /// The stage cells to fit into the view.
@@ -75,7 +81,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
 
     // Backstage.
     if backstage_visible(c) {
-        let faint = !c.settings.is_backstage_shown;
+        let faint = !backstage_on(c);
         let r = v.bounds_to_screen(drawable);
         let fill = if faint { theme::BACKSTAGE.gamma_multiply(0.6) } else { theme::BACKSTAGE };
         painter.rect_filled(r, 4.0, fill);
@@ -89,7 +95,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     // Background.
     if let Some(bg) = &c.stage_background {
         let alpha = bg.alpha.clamp(0.0, 1.0) as f32;
-        let target = if !bg.is_backstage_separated && c.settings.is_backstage_shown { drawable } else { stage };
+        let target = if !bg.is_backstage_separated && backstage_on(c) { drawable } else { stage };
         let builtin = bg.file.as_ref().and_then(|f| f.standard_background_value.as_deref());
         if let Some(img) = s.background {
             paint_image(painter, v, target, img, StageAspectRatio::parse(&bg.aspect_ratio), alpha);
@@ -594,5 +600,14 @@ mod tests {
         c.add_dancer(arrus_core::Unit::at(-1.5, 3.0));
         assert_eq!(fit_bounds(&c), geom::drawable_bounds(&c));
         assert_eq!(dancer_radius(&c), 0.35);
+    }
+
+    #[test]
+    fn fit_includes_backstage_set_up_in_the_file() {
+        // As in an ArrangeUs export: a back backstage, `isBackstageShown` false.
+        let mut c = Choreography::new("t", "id", 0);
+        c.grid_size.backstage.back = 2;
+        assert!(!c.settings.is_backstage_shown);
+        assert_eq!(fit_bounds(&c), geom::drawable_bounds(&c));
     }
 }
