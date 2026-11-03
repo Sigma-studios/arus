@@ -24,10 +24,6 @@ pub struct Config {
     pub insecure_cookies: bool,
     /// `ARUS_DEV_AUTOLOGIN=1` (only honoured with insecure cookies).
     pub dev_autologin: bool,
-    /// `ARUS_DISCORD_WEBHOOK`.
-    pub discord_webhook: Option<String>,
-    /// `ARUS_DISCORD_MENTION`, e.g. `@here`.
-    pub discord_mention: Option<String>,
     /// `ARUS_PUBLIC_URL`, included in alerts.
     pub public_url: Option<String>,
 }
@@ -84,8 +80,6 @@ impl Config {
             format_key,
             insecure_cookies,
             dev_autologin,
-            discord_webhook: env_opt("ARUS_DISCORD_WEBHOOK"),
-            discord_mention: env_opt("ARUS_DISCORD_MENTION"),
             public_url: env_opt("ARUS_PUBLIC_URL"),
         })
     }

@@ -1,6 +1,7 @@
 //! Discord alerts about storage use. The last alerted level is persisted in the
 //! `meta` table so a restart does not alert again.
 
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -85,11 +86,108 @@ pub fn storage_full_due(conn: &Connection, now: i64) -> rusqlite::Result<bool> {
     }
 }
 
-/// Posts alerts to the Discord webhook without ever blocking the caller.
+const WEBHOOK_KEY: &str = "discord_webhook";
+const MENTION_KEY: &str = "discord_mention";
+
+/// Where alerts go, set by the admin in the web UI and kept in the `meta` table.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discord {
+    pub webhook: Option<String>,
+    /// Already in Discord's syntax (`@here`, `<@123>`, `<@&123>`).
+    pub mention: Option<String>,
+}
+
+impl Discord {
+    pub fn load(conn: &Connection) -> rusqlite::Result<Self> {
+        let get = |k| db::meta_get(conn, k).map(|v| v.filter(|s| !s.is_empty()));
+        Ok(Self { webhook: get(WEBHOOK_KEY)?, mention: get(MENTION_KEY)? })
+    }
+
+    pub fn save(&self, conn: &Connection) -> rusqlite::Result<()> {
+        db::meta_set(conn, WEBHOOK_KEY, self.webhook.as_deref().unwrap_or(""))?;
+        db::meta_set(conn, MENTION_KEY, self.mention.as_deref().unwrap_or(""))
+    }
+
+    pub fn settings(&self) -> arrus_api::AlertSettings {
+        arrus_api::AlertSettings {
+            webhook_set: self.webhook.is_some(),
+            webhook_hint: self.webhook.as_deref().map(webhook_hint),
+            mention: self.mention.clone().unwrap_or_default(),
+        }
+    }
+}
+
+const DISCORD_HOSTS: &[&str] = &[
+    "discord.com",
+    "discordapp.com",
+    "ptb.discord.com",
+    "canary.discord.com",
+    "ptb.discordapp.com",
+    "canary.discordapp.com",
+];
+
+/// A Discord webhook URL, trimmed; `None` if it is anything else (the server only
+/// ever posts to Discord).
+pub fn parse_webhook(input: &str) -> Option<String> {
+    let input = input.trim();
+    let url = reqwest::Url::parse(input).ok()?;
+    let ok = url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.host_str().is_some_and(|h| DISCORD_HOSTS.contains(&h))
+        && url.path().starts_with("/api/webhooks/")
+        && url.path().split('/').filter(|p| !p.is_empty()).count() >= 4;
+    ok.then(|| input.to_owned())
+}
+
+/// `discord.com/api/webhooks/1234…/…wxyz`: enough to recognise a webhook, not to use it.
+pub fn webhook_hint(url: &str) -> String {
+    let Ok(u) = reqwest::Url::parse(url) else { return "set".into() };
+    let parts: Vec<&str> = u.path().split('/').filter(|p| !p.is_empty()).collect();
+    let id = parts.get(2).copied().unwrap_or("");
+    let token = parts.get(3).copied().unwrap_or("");
+    let id_start: String = id.chars().take(4).collect();
+    let tail: String = token.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{}/api/webhooks/{id_start}…/…{tail}", u.host_str().unwrap_or(""))
+}
+
+/// Normalise who alerts tag: `@here`, `@everyone`, `user:<id>`, `role:<id>`, `<@id>`,
+/// `<@!id>` or `<@&id>`, separated by spaces or commas. `Some("")` = nobody;
+/// `None` = not understood.
+pub fn parse_mention(input: &str) -> Option<String> {
+    let mut out = Vec::new();
+    for t in input.split([' ', ',']).filter(|t| !t.is_empty()) {
+        let digits = |s: &str| !s.is_empty() && s.len() <= 25 && s.bytes().all(|b| b.is_ascii_digit());
+        let m = if t == "@here" || t == "@everyone" {
+            t.to_owned()
+        } else if let Some(id) = t.strip_prefix("user:").filter(|s| digits(s)) {
+            format!("<@{id}>")
+        } else if let Some(id) = t.strip_prefix("role:").filter(|s| digits(s)) {
+            format!("<@&{id}>")
+        } else if let Some(inner) = t.strip_prefix("<@").and_then(|r| r.strip_suffix('>')) {
+            if let Some(id) = inner.strip_prefix('&').filter(|s| digits(s)) {
+                format!("<@&{id}>")
+            } else if let Some(id) = inner.strip_prefix('!').or(Some(inner)).filter(|s| digits(s)) {
+                format!("<@{id}>")
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
+    Some(out.join(" "))
+}
+
+/// Posts alerts to the Discord webhook the admin configured, without ever blocking
+/// the caller.
 #[derive(Clone)]
 pub struct Notifier {
-    webhook: Option<String>,
-    mention: Option<String>,
+    discord: Arc<RwLock<Discord>>,
     public_url: Option<String>,
     client: reqwest::Client,
     runtime: tokio::runtime::Handle,
@@ -97,30 +195,69 @@ pub struct Notifier {
 
 impl Notifier {
     /// Must be called from within a tokio runtime.
-    pub fn new(webhook: Option<String>, mention: Option<String>, public_url: Option<String>) -> Self {
+    pub fn new(discord: Discord, public_url: Option<String>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        Self { webhook, mention, public_url, client, runtime: tokio::runtime::Handle::current() }
+        Self {
+            discord: Arc::new(RwLock::new(discord)),
+            public_url,
+            client,
+            runtime: tokio::runtime::Handle::current(),
+        }
+    }
+
+    pub fn discord(&self) -> Discord {
+        self.discord.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    pub fn set_discord(&self, d: Discord) {
+        *self.discord.write().unwrap_or_else(|p| p.into_inner()) = d;
     }
 
     pub fn send(&self, kind: AlertKind, used: u64, limit: u64) {
-        let msg = message(kind, used, limit, self.mention.as_deref(), self.public_url.as_deref());
-        let Some(url) = self.webhook.clone() else {
-            tracing::info!("storage alert (no ARUS_DISCORD_WEBHOOK): {msg}");
+        let d = self.discord();
+        let msg = message(kind, used, limit, d.mention.as_deref(), self.public_url.as_deref());
+        let Some(url) = d.webhook else {
+            tracing::info!("storage alert (no Discord webhook set): {msg}");
             return;
         };
         tracing::info!("storage alert: {msg}");
-        let client = self.client.clone();
+        let me = self.clone();
         self.runtime.spawn(async move {
-            let res = client.post(&url).json(&serde_json::json!({ "content": msg })).send().await;
-            match res {
-                Ok(r) if r.status().is_success() => {}
-                Ok(r) => tracing::error!("discord webhook answered {}", r.status()),
-                Err(e) => tracing::error!("discord webhook failed: {e}"),
+            if let Err(e) = me.post(&url, &msg).await {
+                tracing::error!("{e}");
             }
         });
+    }
+
+    /// A test message (tagging nobody), awaited so the admin sees the outcome.
+    pub async fn test(&self, used: u64, limit: u64) -> Result<(), String> {
+        let url = self.discord().webhook.ok_or_else(|| "no Discord webhook is set".to_owned())?;
+        let pct = if limit == 0 { 100.0 } else { used as f64 * 100.0 / limit as f64 };
+        let mut msg = format!(
+            "arus: test message. Storage alerts will be posted here (now {} / {} GB, {pct:.0} %).",
+            gb(used),
+            gb(limit)
+        );
+        if let Some(u) = &self.public_url {
+            msg.push_str(&format!(" {u}"));
+        }
+        self.post(&url, &msg).await
+    }
+
+    async fn post(&self, url: &str, content: &str) -> Result<(), String> {
+        let res = self.client.post(url).json(&serde_json::json!({ "content": content })).send().await;
+        match res {
+            Ok(r) if r.status().is_success() => Ok(()),
+            Ok(r) => {
+                let status = r.status();
+                let body: String = r.text().await.unwrap_or_default().chars().take(200).collect();
+                Err(format!("Discord answered {status}: {body}"))
+            }
+            Err(e) => Err(format!("could not reach Discord: {e}")),
+        }
     }
 }
 
@@ -181,5 +318,49 @@ mod tests {
         assert_eq!(m, "@here arus: storage is over 80 % (4.00 / 5.00 GB, 80 %) https://arus.example");
         let m = message(AlertKind::BackUnder75, gib, 5 * gib, Some("@here"), None);
         assert_eq!(m, "arus: storage is back under 75 % (1.00 / 5.00 GB, 20 %)");
+    }
+
+    #[test]
+    fn webhooks() {
+        let ok = "https://discord.com/api/webhooks/123456789/abcDEF-ghi_jkl";
+        assert_eq!(parse_webhook(&format!("  {ok} ")).as_deref(), Some(ok));
+        assert!(parse_webhook("https://canary.discord.com/api/webhooks/1/x").is_some());
+        for bad in [
+            "http://discord.com/api/webhooks/1/x",
+            "https://evil.com/api/webhooks/1/x",
+            "https://discord.com.evil.com/api/webhooks/1/x",
+            "https://discord.com/api/webhooks/1",
+            "https://discord.com/api/channels/1/x",
+            "https://user:pw@discord.com/api/webhooks/1/x",
+            "https://discord.com:8443/api/webhooks/1/x",
+            "not a url",
+            "",
+        ] {
+            assert_eq!(parse_webhook(bad), None, "{bad}");
+        }
+        assert_eq!(webhook_hint(ok), "discord.com/api/webhooks/1234…/…_jkl");
+    }
+
+    #[test]
+    fn mentions() {
+        assert_eq!(parse_mention("").as_deref(), Some(""));
+        assert_eq!(parse_mention("@here").as_deref(), Some("@here"));
+        assert_eq!(parse_mention("user:42, role:7 @here").as_deref(), Some("<@42> <@&7> @here"));
+        assert_eq!(parse_mention("<@!42> <@42> <@&7>").as_deref(), Some("<@42> <@&7>"));
+        assert_eq!(parse_mention("@someone"), None);
+        assert_eq!(parse_mention("user:abc"), None);
+        assert_eq!(parse_mention("<@abc>"), None);
+    }
+
+    #[test]
+    fn discord_settings_persist() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        assert_eq!(Discord::load(&conn).unwrap(), Discord::default());
+        let d = Discord { webhook: Some("https://discord.com/api/webhooks/1/abcd".into()), mention: Some("@here".into()) };
+        d.save(&conn).unwrap();
+        assert_eq!(Discord::load(&conn).unwrap(), d);
+        Discord::default().save(&conn).unwrap();
+        assert_eq!(Discord::load(&conn).unwrap(), Discord::default());
     }
 }

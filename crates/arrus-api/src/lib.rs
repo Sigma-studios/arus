@@ -36,6 +36,9 @@
 //! | GET  | `/api/choreographies/{id}/music` | | audio bytes with its content type, HTTP Range supported | team readers |
 //! | PUT  | `/api/choreographies/{id}/music` | raw audio bytes, `Content-Type` audio/*, header `X-Filename` | [`ChoreographySummary`] | writers |
 //! | DELETE | `/api/choreographies/{id}/music` | | [`ChoreographySummary`] | writers |
+//! | GET  | `/api/settings/alerts` | | [`AlertSettings`] | admin |
+//! | PUT  | `/api/settings/alerts` | [`UpdateAlertSettings`] | [`AlertSettings`]; 400 with code `invalid_webhook` / `invalid_mention` | admin |
+//! | POST | `/api/settings/alerts/test` | | 204 once Discord accepted it; 400 `no_webhook`; 502 with Discord's answer | admin |
 //!
 //! "Writers" = the admin, or a member of the choreography's team with `can_write`.
 //! "Team readers" = the admin, or any member of the choreography's team.
@@ -221,7 +224,30 @@ pub struct TeamUsage {
 pub struct ApiError {
     pub error: String,
     /// Machine-readable reason when useful: `storage_full`, `username_taken`,
-    /// `not_arrus`, `too_big`.
+    /// `name_taken`, `not_arrus`, `too_big`, `invalid_webhook`, `invalid_mention`,
+    /// `no_webhook`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+}
+
+/// Where storage alerts are posted (admin only). The webhook URL is a secret and is
+/// never sent back whole: only a hint to recognise it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AlertSettings {
+    pub webhook_set: bool,
+    /// E.g. `discord.com/api/webhooks/1234…/…wxyz`.
+    pub webhook_hint: Option<String>,
+    /// Who alerts tag: `@here`, `@everyone`, `<@user id>` or `<@&role id>`; empty for nobody.
+    pub mention: String,
+}
+
+/// Change the alert settings; fields left `None` are unchanged.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct UpdateAlertSettings {
+    /// A Discord webhook URL (`https://discord.com/api/webhooks/…`), or `""` to stop alerts.
+    #[serde(default)]
+    pub webhook: Option<String>,
+    /// `@here`, `@everyone`, `user:<id>`, `role:<id>`, `<@id>`, `<@&id>`, or `""` for nobody.
+    #[serde(default)]
+    pub mention: Option<String>,
 }

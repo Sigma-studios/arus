@@ -48,11 +48,8 @@ impl AppState {
         let db_path = config.data_dir.join("arus.db");
         let conn = db::open(&db_path).with_context(|| format!("opening {}", db_path.display()))?;
         conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [db::now()])?;
-        let notifier = alerts::Notifier::new(
-            config.discord_webhook.clone(),
-            config.discord_mention.clone(),
-            config.public_url.clone(),
-        );
+        // The Discord webhook is set by the admin in the web UI.
+        let notifier = alerts::Notifier::new(alerts::Discord::load(&conn)?, config.public_url.clone());
         let state = AppState(Arc::new(Inner { config, music_dir, notifier, db: Mutex::new(conn) }));
         {
             // The limit may have changed since the last run.

@@ -51,8 +51,6 @@ fn config(dir: &std::path::Path, limit: u64) -> Config {
         format_key: FormatKey::from_env_or_file().ok(),
         insecure_cookies: false,
         dev_autologin: false,
-        discord_webhook: None,
-        discord_mention: None,
         public_url: None,
     }
 }
@@ -775,4 +773,59 @@ async fn team_delete_cascades() {
     assert_eq!(t.get(&format!("/api/teams/{}/members", a.id), &admin).await.status, StatusCode::NOT_FOUND);
     // the username is free again
     t.member(&admin, b.id, "m", false).await;
+}
+
+#[tokio::test]
+async fn alert_settings() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "Crew").await;
+    let m = t.member(&admin, team.id, "bob", true).await;
+    let bob = t.login("bob", &m.password).await;
+
+    // admin only
+    assert_eq!(t.get("/api/settings/alerts", &bob).await.status, StatusCode::FORBIDDEN);
+    let r = t.call(Method::POST, "/api/settings/alerts/test", Some(&bob), None::<()>).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    let s: AlertSettings = t.get("/api/settings/alerts", &admin).await.json();
+    assert_eq!(s, AlertSettings::default());
+    let r = t.call(Method::POST, "/api/settings/alerts/test", Some(&admin), None::<()>).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.json::<ApiError>().code.as_deref(), Some("no_webhook"));
+
+    // only Discord webhooks are accepted (the server never posts elsewhere)
+    let bad = UpdateAlertSettings { webhook: Some("https://example.com/hook".into()), mention: None };
+    let r = t.call(Method::PUT, "/api/settings/alerts", Some(&admin), Some(bad)).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.json::<ApiError>().code.as_deref(), Some("invalid_webhook"));
+    let bad = UpdateAlertSettings { webhook: None, mention: Some("@someone".into()) };
+    let r = t.call(Method::PUT, "/api/settings/alerts", Some(&admin), Some(bad)).await;
+    assert_eq!(r.json::<ApiError>().code.as_deref(), Some("invalid_mention"));
+
+    let url = "https://discord.com/api/webhooks/123456789/token-abcd";
+    let set = UpdateAlertSettings { webhook: Some(url.into()), mention: Some("@here role:42".into()) };
+    let r = t.call(Method::PUT, "/api/settings/alerts", Some(&admin), Some(set)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let s: AlertSettings = r.json();
+    assert!(s.webhook_set);
+    assert_eq!(s.mention, "@here <@&42>");
+    let hint = s.webhook_hint.unwrap();
+    assert!(!hint.contains("token-abcd") && hint.ends_with("abcd"), "{hint}");
+    // the URL itself is never sent back
+    assert!(!String::from_utf8_lossy(&t.get("/api/settings/alerts", &admin).await.body).contains("token-abcd"));
+
+    // survives a restart
+    let again = app(AppState::open(config(t.dir.path(), 1024 * 1024 * 1024)).unwrap());
+    let t2 = T { app: again, dir: tempfile::tempdir().unwrap() };
+    let admin2 = t2.admin().await;
+    let s2: AlertSettings = t2.get("/api/settings/alerts", &admin2).await.json();
+    assert_eq!(s2.mention, "@here <@&42>");
+    assert!(s2.webhook_set);
+
+    // a field left out is unchanged; "" clears
+    let clear = UpdateAlertSettings { webhook: Some(String::new()), mention: None };
+    let s: AlertSettings = t.call(Method::PUT, "/api/settings/alerts", Some(&admin), Some(clear)).await.json();
+    assert!(!s.webhook_set);
+    assert_eq!(s.mention, "@here <@&42>");
 }

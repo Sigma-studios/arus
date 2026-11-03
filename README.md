@@ -25,8 +25,9 @@ embeds it.
 ## Storage
 
 Everything stored (choreographies, their embedded background images, uploaded
-music) counts towards one app-wide limit of 5 GiB. A Discord webhook gets a
-message at 80 % and 95 % and when an upload is refused because storage is full.
+music) counts towards one app-wide limit of 5 GiB. The admin sets a Discord webhook
+in Teams & members → Storage alerts (with a test button); it gets a message at 80 %
+and 95 % and when a save or upload is refused because storage is full.
 
 ## Crates
 
@@ -68,8 +69,6 @@ ARUS_ADMIN_PASSWORD=dev ARUS_INSECURE_COOKIES=1 ARUS_DATA_DIR=./data \
 | `ARUS_DATA_DIR` | `./data` | SQLite database and music files |
 | `ARUS_PORT` | `8080` | |
 | `ARUS_STORAGE_LIMIT_BYTES` | 5 GiB | |
-| `ARUS_DISCORD_WEBHOOK` | | storage alerts |
-| `ARUS_DISCORD_MENTION` | | e.g. `@here` |
 | `ARUS_PUBLIC_URL` | | linked from alerts |
 | `ARUS_INSECURE_COOKIES` | | `1` for plain-http local development |
 
@@ -83,7 +82,7 @@ facade app create arus --git https://github.com/Sigma-studios/arus \
   --health "arrus-server healthcheck"
 facade env set arus ARUS_ADMIN_PASSWORD     # prompts; sensitive
 facade env set arus ARUS_FORMAT_KEY
-facade env set arus ARUS_DISCORD_WEBHOOK
+facade env set arus --public ARUS_PUBLIC_URL=https://arus.online-app.xyz
 facade deploy arus
 ```
 

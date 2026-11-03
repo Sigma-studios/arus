@@ -92,9 +92,26 @@ pub fn hash_choreography() -> Option<i64> {
     h.strip_prefix("#c=")?.parse().ok()
 }
 
+/// Whether the URL fragment is `#admin` (the Teams & members screen).
+pub fn hash_is_admin() -> bool {
+    window().location().hash().is_ok_and(|h| h == "#admin")
+}
+
+/// Reflect the Teams & members screen in the URL fragment.
+pub fn set_hash_admin(on: bool) {
+    if on {
+        set_hash("#admin".into());
+    } else if hash_is_admin() {
+        set_hash(String::new());
+    }
+}
+
 /// Reflect the open choreography in the URL fragment (so reload / links work).
 pub fn set_hash_choreography(id: Option<i64>) {
-    let h = id.map(|id| format!("#c={id}")).unwrap_or_default();
+    set_hash(id.map(|id| format!("#c={id}")).unwrap_or_default());
+}
+
+fn set_hash(h: String) {
     if let Ok(history) = window().history() {
         let url = if h.is_empty() { window().location().pathname().unwrap_or_else(|_| "/".into()) } else { h };
         let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&url));

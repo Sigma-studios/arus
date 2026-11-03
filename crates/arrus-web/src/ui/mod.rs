@@ -110,6 +110,8 @@ impl App {
                 }
                 if let Some(id) = web::hash_choreography() {
                     editor::open(self, id);
+                } else if admin && web::hash_is_admin() {
+                    self.go(Screen::Admin);
                 }
             }
             Err(ApiError::Unauthorized) => web::navigate("/login"),
@@ -216,11 +218,13 @@ impl App {
             self.close_editor();
         }
         self.screen = to;
+        web::set_hash_admin(to == Screen::Admin);
         match to {
             Screen::Library => library::reload(self),
             Screen::Admin => {
                 self.load_teams();
                 admin::load_members(self);
+                admin::load_alerts(self);
             }
             Screen::Editor => {}
         }
