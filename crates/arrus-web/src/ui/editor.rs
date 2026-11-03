@@ -72,8 +72,11 @@ pub struct Editor {
     /// "Next formation (outlines)": off whenever a choreography is opened and
     /// only for this screen (the file's own setting is kept as it is).
     pub show_next: bool,
-    /// Touch stand-in for Shift: taps toggle dancers, empty drags box-select.
+    /// Touch: one-finger drags on empty space draw a selection box (instead
+    /// of moving the view).
     pub multi_select: bool,
+    /// A touch screen: taps add / remove dancers from the selection.
+    pub touch: bool,
     /// egui time of this frame.
     pub now: f64,
 }
@@ -157,6 +160,7 @@ impl Editor {
             show_inspector: false,
             show_next: false,
             multi_select: false,
+            touch: false,
             now: 0.0,
         }
     }
@@ -561,6 +565,7 @@ pub fn pick_background(ed: &Editor, app: &App) {
 pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.now = ui.input(|i| i.time);
     ed.can_edit = app.can_edit();
+    ed.touch = app.touch;
     if ed.compact != app.compact {
         ed.compact = app.compact;
         ed.need_fit = true;
@@ -824,8 +829,8 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                                 }
                             }
                         });
-                        ui.toggle_value(&mut ed.multi_select, "Select")
-                            .on_hover_text("Tap dancers to add or remove them; drag on empty space to select with a box");
+                        ui.toggle_value(&mut ed.multi_select, "Box select")
+                            .on_hover_text("Drag on empty space to select several dancers with a box");
                     }
                     ui.separator();
                     if ui.button("Fit").clicked() {

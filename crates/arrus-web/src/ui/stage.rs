@@ -68,7 +68,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
             i.smooth_scroll_delta(),
             i.multi_touch(),
             i.pointer.hover_pos(),
-            i.modifiers.shift,
+            // Shift or Ctrl (Cmd on a Mac) adds to / removes from the selection.
+            i.modifiers.shift || i.modifiers.command,
             i.pointer.button_down(PointerButton::Middle),
             i.pointer.button_down(PointerButton::Secondary),
         )
@@ -293,9 +294,11 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     if resp.clicked()
         && let Some(pp) = resp.interact_pointer_pos()
     {
+        // On a touch screen a tap adds the dancer to the selection (or takes
+        // it out); a tap on empty space clears it.
         match hit_at(ed, &view, pp) {
             Hit::Dancer(i) => {
-                if shift {
+                if shift || ed.touch {
                     ed.sel.toggle(i);
                 } else {
                     ed.sel = Selection::one(i);
@@ -304,7 +307,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
             Hit::Prop(i) => ed.sel = Selection::Prop(i),
             Hit::Knob(_) | Hit::Corner(..) => {}
             Hit::None => {
-                if !shift {
+                if ed.touch || !shift {
                     ed.sel = Selection::None;
                 }
             }
