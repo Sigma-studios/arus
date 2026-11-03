@@ -581,7 +581,7 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
 
     toolbar(ed, app, ui);
     if ed.compact {
-        tool_row(ed, ui);
+        tool_row(ed, app, ui);
     }
     match timeline_ui::show(ed, ui) {
         Some(timeline_ui::MusicAction::Upload) => upload_music(ed, app),
@@ -732,9 +732,22 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                     // Who else has it open, left of Undo (like a shared document).
                     widgets::presence(ui, &ed.live.others(), 6);
+                    if ui.button("Export PDF").on_hover_text("One page per formation, to share with people who don't use arus").clicked() {
+                        export_pdf(ed, app);
+                    }
                 });
             });
         });
+}
+
+/// Download the PDF (of what the server has: wait for pending changes first).
+fn export_pdf(ed: &mut Editor, app: &mut App) {
+    if ed.live.saving() {
+        ed.collect();
+        app.toast("Saving your last change first, try again in a moment.");
+        return;
+    }
+    web::download(&format!("/api/choreographies/{}/pdf", ed.summary.id));
 }
 
 /// "Saving…" / "All changes saved" / "Offline". Compact: a coloured dot only.
@@ -773,7 +786,7 @@ pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
 /// Phone layout: every tool in one row at the bottom of the screen, in its
 /// own panel (not over the stage) so swiping it scrolls the row instead of
 /// moving the stage.
-fn tool_row(ed: &mut Editor, ui: &mut Ui) {
+fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     egui::Panel::bottom("tools")
         .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 8)))
         .show(ui, |ui| {
@@ -823,6 +836,9 @@ fn tool_row(ed: &mut Editor, ui: &mut Ui) {
                         let mut s = ed.doc.settings.clone();
                         s.is_scene_directions_inverted = inv;
                         ed.set_settings(s, None);
+                    }
+                    if ui.button("PDF").clicked() {
+                        export_pdf(ed, app);
                     }
                     ui.separator();
                     widgets::fullscreen_button(ui);

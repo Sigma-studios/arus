@@ -47,42 +47,20 @@ impl Bounds {
     }
 }
 
-/// The whole grid: `x` in `0..=rows`, `y` in `0..=columns`. As in the
-/// ArrangeUs app, the backstage is part of it (see [`stage_bounds`]), and
-/// dancers may stand anywhere in it.
+pub use arrus_core::layout::backstage_on;
+
+fn bounds(a: arrus_core::layout::Area) -> Bounds {
+    Bounds::new(P::new(a.x0, a.y0), P::new(a.x1, a.y1))
+}
+
+/// The whole grid (backstage included); see [`arrus_core::layout::grid_area`].
 pub fn drawable_bounds(c: &Choreography) -> Bounds {
-    Bounds::new(P::new(0.0, 0.0), P::new(c.grid_size.width().max(1.0), c.grid_size.depth().max(1.0)))
+    bounds(arrus_core::layout::grid_area(c))
 }
 
-/// The performing area. With the backstage on, it is the grid minus its outer
-/// cells: `sides` on both x ends, `back` from y = 0, `front` (audience side)
-/// up to y = columns. Otherwise the whole grid.
+/// The performing area; see [`arrus_core::layout::stage_area`].
 pub fn stage_bounds(c: &Choreography) -> Bounds {
-    let g = drawable_bounds(c);
-    if !backstage_on(c) {
-        return g;
-    }
-    let b = &c.grid_size.backstage;
-    let sides = b.sides.max(0) as f64;
-    let (back, front) = (b.back.max(0) as f64, b.front.max(0) as f64);
-    let s = Bounds::new(P::new(g.min.x + sides, g.min.y + back), P::new(g.max.x - sides, g.max.y - front));
-    // A backstage that eats the whole grid leaves no stage: ignore it.
-    if s.width() < 1.0 || s.height() < 1.0 { g } else { s }
-}
-
-/// Whether the choreography sets up a backstage beyond the app's default
-/// (`sides: 2, back: 0, front: 0`). The ArrangeUs app shows such a backstage
-/// even when `isBackstageShown` is false in the file.
-pub fn backstage_configured(c: &Choreography) -> bool {
-    let b = &c.grid_size.backstage;
-    let d = arrus_core::BackstageSize::default();
-    b.back > d.back || b.front > d.front || b.sides > d.sides
-}
-
-/// Whether the backstage is on: toggled on, or set up in the file (as the
-/// ArrangeUs app shows it).
-pub fn backstage_on(c: &Choreography) -> bool {
-    c.settings.is_backstage_shown || backstage_configured(c)
+    bounds(arrus_core::layout::stage_area(c))
 }
 
 /// Round to the nearest multiple of `step`.
@@ -103,24 +81,7 @@ pub const ROTATION_SNAP_DEG: f64 = 15.0;
 /// of radius 1 around the origin, `-y` points up in the default view (towards
 /// the backstage). `None` = a circle.
 pub fn dancer_shape_outline(shape: DancerShape) -> Option<Vec<P>> {
-    use DancerShape::*;
-    let s = 0.82; // half side of the squares, so they look as heavy as the circle
-    let t = 0.95;
-    let pts: &[(f64, f64)] = match shape {
-        Circle => return None,
-        Square => &[(-s, -s), (s, -s), (s, s), (-s, s)],
-        RotatedSquare => &[(0.0, -1.05), (1.05, 0.0), (0.0, 1.05), (-1.05, 0.0)],
-        Triangle => &[(0.0, -t), (t, 0.75), (-t, 0.75)],
-        UpsideDownTriangle => &[(-t, -0.75), (t, -0.75), (0.0, t)],
-        LeftTriangle => &[(-t, 0.0), (0.75, -t), (0.75, t)],
-        RightTriangle => &[(t, 0.0), (-0.75, t), (-0.75, -t)],
-        // Right-angled triangles named after the corner holding the right angle.
-        TopLeftTriangle => &[(-s, -s), (s, -s), (-s, s)],
-        TopRightTriangle => &[(-s, -s), (s, -s), (s, s)],
-        BottomLeftTriangle => &[(-s, -s), (s, s), (-s, s)],
-        BottomRightTriangle => &[(s, -s), (s, s), (-s, s)],
-    };
-    Some(pts.iter().map(|&(x, y)| P::new(x, y)).collect())
+    arrus_core::layout::shape_outline(shape).map(|pts| pts.iter().map(|&(x, y)| P::new(x, y)).collect())
 }
 
 /// Human name of a dancer shape.
@@ -321,12 +282,12 @@ mod tests {
     #[test]
     fn backstage_configured_beyond_app_default() {
         let mut c = Choreography::new("t", "id", 0);
-        assert!(!backstage_configured(&c));
+        assert!(!arrus_core::layout::backstage_configured(&c));
         c.grid_size.backstage.back = 2;
-        assert!(backstage_configured(&c));
+        assert!(arrus_core::layout::backstage_configured(&c));
         c.grid_size.backstage.back = 0;
         c.grid_size.backstage.sides = 3;
-        assert!(backstage_configured(&c));
+        assert!(arrus_core::layout::backstage_configured(&c));
     }
 
     #[test]

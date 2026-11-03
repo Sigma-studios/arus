@@ -929,3 +929,27 @@ async fn live_patches_merge_and_stream() {
     assert_eq!(t.call(Method::DELETE, &url, Some(&w), None::<()>).await.status, StatusCode::NO_CONTENT);
     assert_eq!(next_live(&mut live).await, LiveEvent::Deleted);
 }
+
+#[tokio::test]
+async fn pdf_export() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "A").await;
+    let r = t.member(&admin, team.id, "r", false).await;
+    let r = t.login("r", &r.password).await;
+    let other = t.team(&admin, "B").await;
+    let o = t.member(&admin, other.id, "o", true).await;
+    let o = t.login("o", &o.password).await;
+    let s: ChoreographySummary = t.create(&admin, Some(team.id), sample()).await.json();
+
+    // Readers may download it; it needs no format key.
+    let res = t.get(&format!("/api/choreographies/{}/pdf", s.id), &r).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.headers[header::CONTENT_TYPE], "application/pdf");
+    assert_eq!(res.headers[header::CONTENT_DISPOSITION], format!("attachment; filename=\"{}.pdf\"", s.name));
+    assert!(res.body.starts_with(b"%PDF-") && res.body.ends_with(b"%%EOF\n"));
+    let pages = res.body.windows(12).filter(|w| w == b"/Type /Page ").count();
+    assert_eq!(pages, s.formation_count as usize);
+    // Other teams cannot.
+    assert_eq!(t.get(&format!("/api/choreographies/{}/pdf", s.id), &o).await.status, StatusCode::NOT_FOUND);
+}

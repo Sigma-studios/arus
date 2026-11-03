@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/choreographies/{id}/patch", post(choreographies::patch))
         .route("/choreographies/{id}/live", get(choreographies::live))
         .route("/choreographies/{id}/export", get(transfer::export))
+        .route("/choreographies/{id}/pdf", get(transfer::pdf))
         .route("/choreographies/{id}/music", get(music::get).put(music::put).delete(music::delete))
         .route("/settings/alerts", get(settings::get_alerts).put(settings::update_alerts))
         .route("/settings/alerts/test", post(settings::test_alerts))

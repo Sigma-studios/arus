@@ -1,4 +1,4 @@
-//! `.arrus` / `.aubkp` import and `.arrus` export.
+//! `.arrus` / `.aubkp` import, `.arrus` export, and the PDF export.
 
 use arrus_api::{ImportResult, MAX_IMPORT_BYTES};
 use arrus_core::format::{self, FormatKey, Imported};
@@ -118,6 +118,33 @@ pub async fn export(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
         [
             (CONTENT_TYPE, "application/octet-stream".to_string()),
             (CONTENT_DISPOSITION, content_disposition(&name, "arrus")),
+            (CACHE_CONTROL, "no-store".to_string()),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+/// The choreography as a PDF, one page per formation (no format key needed).
+pub async fn pdf(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<Response> {
+    let json = state
+        .db(move |_, conn| {
+            readable(conn, &auth.user, id)?;
+            let json: Option<String> =
+                conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+            json.ok_or_else(Error::not_found)
+        })
+        .await?;
+    let (bytes, name) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let c: Choreography = serde_json::from_str(&json).map_err(Error::internal)?;
+        Ok((arrus_core::pdf::render(&c), c.name))
+    })
+    .await
+    .map_err(Error::internal)??;
+    Ok((
+        [
+            (CONTENT_TYPE, "application/pdf".to_string()),
+            (CONTENT_DISPOSITION, content_disposition(&name, "pdf")),
             (CACHE_CONTROL, "no-store".to_string()),
         ],
         bytes,

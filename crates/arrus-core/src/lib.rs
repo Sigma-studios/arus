@@ -4,7 +4,9 @@
 //! See `docs/arrus-format.md` for the format and schema.
 
 pub mod format;
+pub mod layout;
 pub mod model;
+pub mod pdf;
 pub mod timeline;
 
 pub use format::{FormatKey, Imported};

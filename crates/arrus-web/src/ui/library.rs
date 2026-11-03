@@ -237,6 +237,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 if ui.button("Export").clicked() {
                                     web::download(&format!("/api/choreographies/{}/export", c.id));
                                 }
+                                if ui.button("PDF").clicked() {
+                                    web::download(&format!("/api/choreographies/{}/pdf", c.id));
+                                }
                             });
                         });
                         ui.add_space(8.0);
@@ -276,6 +279,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             }
                             if ui.button("Export").on_hover_text("Download as .arrus for the ArrangeUs app").clicked() {
                                 web::download(&format!("/api/choreographies/{}/export", c.id));
+                            }
+                            if ui.button("PDF").on_hover_text("Download a PDF to share: one page per formation").clicked() {
+                                web::download(&format!("/api/choreographies/{}/pdf", c.id));
                             }
                             if writer && ui.button(RichText::new("Delete").color(theme::ERROR)).clicked() {
                                 del = Some((c.id, c.name.clone()));

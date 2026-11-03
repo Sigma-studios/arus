@@ -34,6 +34,7 @@
 //! | POST | `/api/choreographies/{id}/patch` | [`PatchChoreography`] | [`Saved`] | writers |
 //! | GET  | `/api/choreographies/{id}/live?session={s}` | | `text/event-stream` of [`LiveEvent`] JSON | team readers |
 //! | GET  | `/api/choreographies/{id}/export` | | `.arrus` bytes (`Content-Disposition: attachment`) | team readers |
+//! | GET  | `/api/choreographies/{id}/pdf` | | PDF, one page per formation (`Content-Disposition: attachment`) | team readers |
 //! | POST | `/api/teams/{id}/import` | raw `.arrus` / `.aubkp` bytes, header `X-Filename` | [`ImportResult`] | writers of that team |
 //! | GET  | `/api/choreographies/{id}/music` | | audio bytes with its content type, HTTP Range supported | team readers |
 //! | PUT  | `/api/choreographies/{id}/music` | raw audio bytes, `Content-Type` audio/*, header `X-Filename` | [`ChoreographySummary`] | writers |
