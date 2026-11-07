@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use arrus_api::{ChoreographyDoc, ChoreographyId, ChoreographySummary};
-use arrus_core::timeline::{self, Easing};
+use arrus_core::timeline::{self, Easing, Phase};
 use arrus_core::{Choreography, Comment, StageBackground, StageBackgroundFile};
 use egui::{Align, Event, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, Sense, Ui, vec2};
 
@@ -50,6 +50,10 @@ pub struct Editor {
     /// Live co-editing: autosave, other people's changes, presence.
     pub live: live::Live,
     pub t: f64,
+    /// Formation picked from the list or with previous/next: it stays current
+    /// while the playhead sits at its hold start (see `edit::phase`), and the
+    /// playhead follows it when edits move that start.
+    pinned: Option<usize>,
     pub playing: bool,
     last_tick: Option<f64>,
     pub audio: Option<Audio>,
@@ -145,6 +149,7 @@ impl Editor {
             dirty: false,
             live,
             t: 0.0,
+            pinned: None,
             playing: false,
             last_tick: None,
             audio,
@@ -291,7 +296,12 @@ impl Editor {
 
     /// Formation edits apply to (the one held or being entered).
     pub fn cur(&self) -> usize {
-        edit::formation_at(&self.doc, self.t)
+        edit::formation_at(&self.doc, self.t, self.pinned)
+    }
+
+    /// Where the playhead is (with the formation picked explicitly, if any).
+    pub fn phase(&self) -> Option<Phase> {
+        edit::phase(&self.doc, self.t, self.pinned, self.easing)
     }
 
     pub fn delete_selection(&mut self) {
@@ -390,6 +400,7 @@ impl Editor {
             self.t = 0.0;
         }
         self.drag = None;
+        self.pinned = None;
         if let Some(a) = &self.audio {
             a.seek(self.t);
             a.play();
@@ -411,6 +422,7 @@ impl Editor {
     }
 
     pub fn seek(&mut self, t: f64) {
+        self.pinned = None;
         self.t = t.clamp(0.0, self.timeline_len().max(0.0));
         if let Some(a) = &self.audio {
             a.seek(self.t);
@@ -419,6 +431,17 @@ impl Editor {
 
     pub fn go_to_formation(&mut self, i: usize) {
         self.seek(timeline::formation_time(&self.doc, i));
+        self.pinned = Some(i);
+    }
+
+    /// Keep the playhead on the picked formation when edits (a longer
+    /// transition into it, someone else's change) move its hold start.
+    fn follow_pinned(&mut self) {
+        match self.pinned {
+            Some(p) if p >= self.doc.formations.len() => self.pinned = None,
+            Some(p) if timeline::formation_time(&self.doc, p) != self.t => self.go_to_formation(p),
+            _ => {}
+        }
     }
 
     pub fn prev_formation(&mut self) {
@@ -426,9 +449,9 @@ impl Editor {
         let f = self.cur();
         let Some(s) = spans.get(f) else { return };
         if self.t > s.hold_start + 0.25 || f == 0 {
-            self.seek(s.hold_start);
+            self.go_to_formation(f);
         } else {
-            self.seek(spans[f - 1].hold_start);
+            self.go_to_formation(f - 1);
         }
     }
 
@@ -590,11 +613,13 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         ui.ctx().request_repaint();
     }
     keyboard(ed, app, ui);
-    if ed.can_edit && !ed.playing && !ed.scrubbing {
-        let snapped = edit::snap_out_of_transition(&ed.doc, ed.t);
-        if snapped != ed.t {
-            ed.seek(snapped);
-        }
+    if !ed.playing && !ed.scrubbing {
+        ed.follow_pinned();
+    }
+    if ed.can_edit && !ed.playing && !ed.scrubbing
+        && let Some(to) = edit::entered_formation(&ed.doc, ed.t, ed.pinned)
+    {
+        ed.go_to_formation(to);
     }
     ed.update_background(&app.net);
 

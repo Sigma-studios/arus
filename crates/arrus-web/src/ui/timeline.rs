@@ -159,7 +159,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
 }
 
 fn formation_label(ed: &Editor) -> String {
-    match timeline::phase_at(&ed.doc, ed.t, ed.easing) {
+    match ed.phase() {
         Some(Phase::Transition { from, to, .. }) => format!("Transition {} → {}", from + 1, to + 1),
         Some(Phase::Hold { formation }) => format!("Formation {}", edit::formation_label(&ed.doc, formation)),
         None => String::new(),
@@ -276,6 +276,11 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
                     if selected { theme::TEXT } else { theme::TEXT_WEAK },
                 );
             }
+        } else {
+            // A 0 s hold: a thin mark, so it can be seen (and picked in the list).
+            let selected = s.formation == cur;
+            let mr = Rect::from_center_size(pos2(x1, inner.center().y), vec2(3.0, inner.height()));
+            p.rect_filled(mr, 1.5, if selected { theme::ACCENT } else { theme::HOLD });
         }
     }
     // Music beyond the last formation.

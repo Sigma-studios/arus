@@ -316,25 +316,35 @@ pub fn remove_prop(c: &mut Choreography, f: usize, i: usize) -> bool {
     }
 }
 
-/// The formation edits apply to at time `t`: the one held, or the one being
-/// entered during a transition.
-pub fn formation_at(c: &Choreography, t: f64) -> usize {
-    timeline::phase_at(c, t, Easing::Linear).map(Phase::current).unwrap_or(0)
-}
-
-/// If `t` falls inside a transition, the hold start of the formation being
-/// entered; otherwise `t` unchanged.
-pub fn snap_out_of_transition(c: &Choreography, t: f64) -> f64 {
-    match timeline::phase_at(c, t, Easing::Linear) {
-        Some(Phase::Transition { to, .. }) => timeline::formation_time(c, to),
-        _ => t,
+/// Where the playhead is: the phase at `t`, unless `pinned` (a formation picked
+/// from the list or with previous/next) has its hold starting at `t`. A 0 s
+/// formation shares that instant with the next transition or formation, so time
+/// alone could never select it.
+pub fn phase(c: &Choreography, t: f64, pinned: Option<usize>, easing: Easing) -> Option<Phase> {
+    match pinned {
+        Some(p) if p < c.formations.len() && timeline::formation_time(c, p) == t => Some(Phase::Hold { formation: p }),
+        _ => timeline::phase_at(c, t, easing),
     }
 }
 
-/// Props shown at time `t`: those of the current formation, moving smoothly
+/// The formation edits apply to: the one held, or the one being entered during
+/// a transition.
+pub fn formation_at(c: &Choreography, t: f64, pinned: Option<usize>) -> usize {
+    phase(c, t, pinned, Easing::Linear).map(Phase::current).unwrap_or(0)
+}
+
+/// If the playhead is inside a transition, the formation being entered.
+pub fn entered_formation(c: &Choreography, t: f64, pinned: Option<usize>) -> Option<usize> {
+    match phase(c, t, pinned, Easing::Linear) {
+        Some(Phase::Transition { to, .. }) => Some(to),
+        _ => None,
+    }
+}
+
+/// Props shown in `phase`: those of the current formation, moving smoothly
 /// from the previous formation's matching prop (same index and type).
-pub fn props_at(c: &Choreography, t: f64, easing: Easing) -> Vec<Prop> {
-    match timeline::phase_at(c, t, easing) {
+pub fn props_in(c: &Choreography, phase: Option<Phase>) -> Vec<Prop> {
+    match phase {
         None => Vec::new(),
         Some(Phase::Hold { formation }) => props(c, formation).to_vec(),
         Some(Phase::Transition { from, to, progress }) => {
@@ -510,11 +520,33 @@ mod tests {
     #[test]
     fn editing_target_snaps_into_entered_formation() {
         let c = sample(); // f0 0..10, transition 10..13, f1 13..23
-        assert_eq!(formation_at(&c, 5.0), 0);
-        assert_eq!(formation_at(&c, 11.0), 1);
-        assert_eq!(snap_out_of_transition(&c, 11.0), 13.0);
-        assert_eq!(snap_out_of_transition(&c, 5.0), 5.0);
-        assert_eq!(snap_out_of_transition(&c, 15.0), 15.0);
+        assert_eq!(formation_at(&c, 5.0, None), 0);
+        assert_eq!(formation_at(&c, 11.0, None), 1);
+        assert_eq!(entered_formation(&c, 11.0, None), Some(1));
+        assert_eq!(entered_formation(&c, 5.0, None), None);
+        assert_eq!(entered_formation(&c, 15.0, None), None);
+    }
+
+    #[test]
+    fn zero_second_formation_can_be_selected() {
+        let mut c = sample(); // f0 0..10, transition 10..13, f1 13..23
+        c.formations.push(c.formations[1].clone()); // transition 23..26, f2 26..36
+        c.formations[1].duration = 0.0; // f1 is the instant 13
+        let t = timeline::formation_time(&c, 1);
+        assert_eq!(t, 13.0);
+        // By time alone, 13 is already the start of the transition into f2...
+        assert_eq!(formation_at(&c, t, None), 2);
+        assert_eq!(entered_formation(&c, t, None), Some(2));
+        // ...but picked explicitly, f1 is held there.
+        assert_eq!(formation_at(&c, t, Some(1)), 1);
+        assert_eq!(entered_formation(&c, t, Some(1)), None);
+        // A pin elsewhere in time doesn't apply.
+        assert_eq!(formation_at(&c, 5.0, Some(1)), 0);
+        // Nor does one with no transition into the next formation: f1 and f2 share 13.
+        c.formations[2].transition_duration = 0.0;
+        assert_eq!(formation_at(&c, t, None), 2);
+        assert_eq!(formation_at(&c, t, Some(1)), 1);
+        assert_eq!(formation_at(&c, t, Some(2)), 2);
     }
 
     #[test]
@@ -525,12 +557,12 @@ mod tests {
         c.formations[1].props = Some(vec![props(&c, 0)[0].clone()]);
         prop_mut(&mut c, 1, 0).unwrap().position = P::new(0.0, 0.0);
         let start = props(&c, 0)[0].position;
-        let mid = props_at(&c, 11.5, Easing::Linear);
+        let mid = props_in(&c, timeline::phase_at(&c, 11.5, Easing::Linear));
         assert_eq!(mid.len(), 1);
         assert_eq!(mid[0].position, start.lerp(P::new(0.0, 0.0), 0.5));
         assert!(remove_prop(&mut c, 0, i));
         assert!(!remove_prop(&mut c, 0, 0));
-        assert!(props_at(&c, 1.0, Easing::Linear).is_empty());
+        assert!(props_in(&c, timeline::phase_at(&c, 1.0, Easing::Linear)).is_empty());
     }
 
     #[test]

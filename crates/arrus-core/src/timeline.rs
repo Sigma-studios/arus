@@ -107,7 +107,11 @@ pub struct DancerAt {
 
 /// Where every dancer is at time `t`.
 pub fn dancers_at(c: &Choreography, t: f64, easing: Easing) -> Vec<DancerAt> {
-    let Some(phase) = phase_at(c, t, easing) else { return Vec::new() };
+    phase_at(c, t, easing).map(|p| dancers_in(c, p)).unwrap_or_default()
+}
+
+/// Where every dancer is in `phase`.
+pub fn dancers_in(c: &Choreography, phase: Phase) -> Vec<DancerAt> {
     match phase {
         Phase::Hold { formation } => c.formations[formation]
             .units
