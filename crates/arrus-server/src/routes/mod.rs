@@ -1,10 +1,11 @@
 //! The router, the CSRF guard, and request helpers shared by the `/api` handlers.
 
+pub mod accounts;
 mod choreographies;
 mod me;
 mod music;
 mod settings;
-mod teams;
+pub mod teams;
 mod transfer;
 
 use arrus_api::CSRF_HEADER;
@@ -13,7 +14,7 @@ use axum::extract::{DefaultBodyLimit, FromRequest, Request};
 use axum::http::{HeaderMap, Method, StatusCode, header::CONTENT_LENGTH};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
@@ -29,13 +30,17 @@ pub const JSON_LIMIT: usize = 64 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
-        .route("/me", get(me::me))
+        .route("/me", get(accounts::me).patch(accounts::update_me))
+        .route("/accounts", get(accounts::list).post(accounts::create))
+        .route("/accounts/{id}", patch(accounts::update).delete(accounts::delete))
         .route("/storage", get(me::storage))
         .route("/teams", get(teams::list).post(teams::create))
         .route("/teams/{id}", patch(teams::update).delete(teams::delete))
-        .route("/teams/{id}/members", get(teams::list_members).post(teams::create_member))
+        .route("/teams/{id}/members", get(teams::list_members).post(teams::add_member))
+        .route("/teams/{id}/members/{account}", patch(teams::update_member).delete(teams::remove_member))
+        .route("/teams/{id}/invites", get(teams::list_invites).post(teams::create_invite))
+        .route("/invites/{token}", delete(teams::delete_invite))
         .route("/teams/{id}/import", post(transfer::import))
-        .route("/members/{id}", patch(teams::update_member).delete(teams::delete_member))
         .route("/choreographies", get(choreographies::list).post(choreographies::create))
         .route(
             "/choreographies/{id}",
@@ -56,6 +61,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api)
         .route("/login", get(web::login_page).post(web::login_submit))
+        .route("/signup", get(web::signup_page).post(web::signup_submit))
+        .route("/join/{token}", get(web::join))
         .route("/logout", post(web::logout))
         .route("/healthz", get(web::healthz))
         .fallback(web::fallback)

@@ -1,6 +1,8 @@
-//! Sessions, the login check, and the [`Auth`] extractor with permission helpers.
+//! Sessions, passwords, the login check, and the [`Auth`] extractor with permission helpers.
 
-use arrus_api::{ADMIN_USERNAME, Me, Role, TeamRef};
+use arrus_api::{ADMIN_USERNAME, TeamRole};
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
 use axum::extract::FromRequestParts;
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::request::Parts;
@@ -20,8 +22,19 @@ const SLIDE_AFTER: i64 = 24 * 3600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum User {
+    /// The master admin (password from the environment).
     Admin,
-    Member { id: i64, username: String, team_id: i64, team_name: String, can_write: bool },
+    Account(Account),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    pub id: i64,
+    pub nickname: String,
+    pub is_admin: bool,
+    pub is_premium: bool,
+    /// The teams it is in, and as what.
+    pub teams: Vec<(i64, TeamRole)>,
 }
 
 /// The logged-in user of a request.
@@ -36,26 +49,40 @@ pub struct Auth {
 }
 
 impl User {
+    /// The master admin, or an account with admin rights.
     pub fn is_admin(&self) -> bool {
-        matches!(self, User::Admin)
+        match self {
+            User::Admin => true,
+            User::Account(a) => a.is_admin,
+        }
     }
 
     pub fn username(&self) -> String {
         match self {
             User::Admin => ADMIN_USERNAME.to_string(),
-            User::Member { username, .. } => username.clone(),
+            User::Account(a) => a.nickname.clone(),
         }
     }
 
-    pub fn me(&self) -> Me {
+    pub fn account_id(&self) -> Option<i64> {
         match self {
-            User::Admin => Me { username: ADMIN_USERNAME.into(), role: Role::Admin, team: None, can_write: true },
-            User::Member { username, team_id, team_name, can_write, .. } => Me {
-                username: username.clone(),
-                role: Role::Member,
-                team: Some(TeamRef { id: *team_id, name: team_name.clone() }),
-                can_write: *can_write,
-            },
+            User::Admin => None,
+            User::Account(a) => Some(a.id),
+        }
+    }
+
+    pub fn role_in(&self, team_id: i64) -> Option<TeamRole> {
+        match self {
+            User::Admin => None,
+            User::Account(a) => a.teams.iter().find(|(t, _)| *t == team_id).map(|(_, r)| *r),
+        }
+    }
+
+    /// The team meant when a request names none: an account's only team.
+    pub fn default_team(&self) -> Option<i64> {
+        match self {
+            User::Account(a) if a.teams.len() == 1 => Some(a.teams[0].0),
+            _ => None,
         }
     }
 
@@ -63,24 +90,53 @@ impl User {
         if self.is_admin() { Ok(()) } else { Err(Error::forbidden("admin only")) }
     }
 
-    /// The admin, or a member of `team_id`; others get 404.
+    /// The admin, or anyone in `team_id`; others get 404.
     pub fn check_read(&self, team_id: i64) -> Result<()> {
-        match self {
-            User::Admin => Ok(()),
-            User::Member { team_id: t, .. } if *t == team_id => Ok(()),
-            User::Member { .. } => Err(Error::not_found()),
-        }
+        if self.is_admin() || self.role_in(team_id).is_some() { Ok(()) } else { Err(Error::not_found()) }
     }
 
-    /// The admin, or a writer of `team_id` (404 for other teams, 403 for readers).
+    /// The admin, or an owner / co-owner of `team_id` (404 for other teams, 403 for guests).
     pub fn check_write(&self, team_id: i64) -> Result<()> {
         self.check_read(team_id)?;
-        match self {
-            User::Member { can_write: false, .. } => {
+        match self.role_in(team_id) {
+            Some(TeamRole::Guest) if !self.is_admin() => {
                 Err(Error::forbidden("you can view this team's choreographies but not change them"))
             }
             _ => Ok(()),
         }
+    }
+
+    /// The admin, or the owner of `team_id`: may rename it, delete it and
+    /// decide who is in it.
+    pub fn check_manage(&self, team_id: i64) -> Result<()> {
+        self.check_read(team_id)?;
+        if self.is_admin() || self.role_in(team_id) == Some(TeamRole::Owner) {
+            Ok(())
+        } else {
+            Err(Error::forbidden("only the team's owner can do that"))
+        }
+    }
+}
+
+/// An argon2 hash (PHC string) of `password`.
+pub fn hash_password(password: &str) -> String {
+    let mut bytes = [0u8; 16];
+    rand::rng().fill(&mut bytes);
+    let Ok(salt) = SaltString::encode_b64(&bytes) else { return String::new() };
+    Argon2::default().hash_password(password.as_bytes(), &salt).map(|h| h.to_string()).unwrap_or_default()
+}
+
+pub fn verify_password(password: &str, hash: &str) -> bool {
+    PasswordHash::new(hash).is_ok_and(|h| Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
+}
+
+/// Check an account's password. A password still visible to the admin
+/// (generated, or set by the admin) is compared ignoring case: phone
+/// keyboards like to capitalise.
+pub fn password_matches(typed: &str, hash: &str, visible: Option<&str>) -> bool {
+    match visible {
+        Some(v) => ct_eq(&typed.trim().to_lowercase(), &v.to_lowercase()),
+        None => verify_password(typed, hash),
     }
 }
 
@@ -102,46 +158,49 @@ pub fn ct_eq(a: &str, b: &str) -> bool {
 }
 
 /// Create a session; returns the raw token for the cookie.
-pub fn create_session(conn: &Connection, member_id: Option<i64>) -> rusqlite::Result<String> {
+pub fn create_session(conn: &Connection, account_id: Option<i64>) -> rusqlite::Result<String> {
     let token = new_token();
     let now = db::now();
     conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [now])?;
     conn.execute(
-        "INSERT INTO sessions (token_hash, member_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
-        params![hash_token(&token), member_id, now, now + SESSION_TTL],
+        "INSERT INTO sessions (token_hash, account_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+        params![hash_token(&token), account_id, now, now + SESSION_TTL],
     )?;
     Ok(token)
 }
 
-/// `Some(member_id)` (None inside = admin) if the credentials are right.
+/// `Some(account_id)` (None inside = the master admin) if the credentials are
+/// right. `login` is a nickname or an email.
 pub fn check_login(
     conn: &Connection,
     admin_password: &str,
-    username: &str,
+    login: &str,
     password: &str,
 ) -> rusqlite::Result<Option<Option<i64>>> {
-    let username = username.trim();
-    if username.eq_ignore_ascii_case(ADMIN_USERNAME) {
+    let login = login.trim();
+    if login.eq_ignore_ascii_case(ADMIN_USERNAME) {
         return Ok(ct_eq(password, admin_password).then_some(None));
     }
-    let row: Option<(i64, String)> = conn
+    let lower = login.to_lowercase();
+    let row: Option<(i64, String, Option<String>)> = conn
         .query_row(
-            "SELECT id, password FROM members WHERE username_lower = ?1",
-            [username.to_lowercase()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            "SELECT id, password_hash, password_visible FROM accounts WHERE nickname_lower = ?1 OR email_lower = ?1",
+            [&lower],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    // Generated passwords are lowercase; phone keyboards like to capitalise.
-    let typed = password.trim().to_lowercase();
     Ok(match row {
-        Some((id, stored)) if ct_eq(&typed, &stored) => Some(Some(id)),
+        Some((id, hash, visible)) if password_matches(password, &hash, visible.as_deref()) => Some(Some(id)),
         Some(_) => None,
         None => {
-            let _ = ct_eq(&typed, "dummy-dummy-00");
+            // About as slow as a real check.
+            let _ = verify_password(password, &DUMMY_HASH);
             None
         }
     })
 }
+
+static DUMMY_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| hash_password("no such account"));
 
 pub fn session_token(headers: &HeaderMap) -> Option<String> {
     for value in headers.get_all(COOKIE) {
@@ -163,17 +222,12 @@ pub fn session_token(headers: &HeaderMap) -> Option<String> {
 /// Look up (and slide) the session of a token.
 pub fn lookup(conn: &Connection, token: &str) -> rusqlite::Result<Option<Auth>> {
     let token_hash = hash_token(token);
-    type Row = (Option<i64>, i64, Option<String>, Option<i64>, Option<String>, Option<bool>);
-    let row: Option<Row> = conn
-        .query_row(
-            "SELECT s.member_id, s.expires_at, m.username, m.team_id, t.name, m.can_write \
-             FROM sessions s LEFT JOIN members m ON m.id = s.member_id \
-             LEFT JOIN teams t ON t.id = m.team_id WHERE s.token_hash = ?1",
-            [&token_hash],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-        )
+    let row: Option<(Option<i64>, i64)> = conn
+        .query_row("SELECT account_id, expires_at FROM sessions WHERE token_hash = ?1", [&token_hash], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .optional()?;
-    let Some((member_id, expires_at, username, team_id, team_name, can_write)) = row else {
+    let Some((account_id, expires_at)) = row else {
         return Ok(None);
     };
     let now = db::now();
@@ -181,13 +235,11 @@ pub fn lookup(conn: &Connection, token: &str) -> rusqlite::Result<Option<Auth>> 
         conn.execute("DELETE FROM sessions WHERE token_hash = ?1", [&token_hash])?;
         return Ok(None);
     }
-    let user = match member_id {
+    let user = match account_id {
         None => User::Admin,
-        Some(id) => match (username, team_id, team_name, can_write) {
-            (Some(username), Some(team_id), Some(team_name), Some(can_write)) => {
-                User::Member { id, username, team_id, team_name, can_write }
-            }
-            _ => return Ok(None),
+        Some(id) => match load_account(conn, id)? {
+            Some(a) => User::Account(a),
+            None => return Ok(None),
         },
     };
     let refreshed = expires_at - now < SESSION_TTL - SLIDE_AFTER;
@@ -198,6 +250,24 @@ pub fn lookup(conn: &Connection, token: &str) -> rusqlite::Result<Option<Auth>> 
         )?;
     }
     Ok(Some(Auth { user, token_hash, refreshed, token: token.to_string() }))
+}
+
+pub fn load_account(conn: &Connection, id: i64) -> rusqlite::Result<Option<Account>> {
+    let row: Option<(String, bool, bool)> = conn
+        .query_row("SELECT nickname, is_admin, is_premium FROM accounts WHERE id = ?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?;
+    let Some((nickname, is_admin, is_premium)) = row else { return Ok(None) };
+    let mut stmt = conn.prepare("SELECT team_id, role FROM team_members WHERE account_id = ?1 ORDER BY team_id")?;
+    let teams = stmt
+        .query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .filter_map(|r| match r {
+            Ok((t, role)) => TeamRole::parse(&role).map(|role| Ok((t, role))),
+            Err(e) => Some(Err(e)),
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(Some(Account { id, nickname, is_admin, is_premium, teams }))
 }
 
 /// The session of a request, if any.

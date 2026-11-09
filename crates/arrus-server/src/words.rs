@@ -1,4 +1,4 @@
-//! Generated member passwords: `word-word-NN`, easy to read out and type on a phone.
+//! Generated account passwords: `word-word-NN`, easy to read out and type on a phone.
 
 use rand::RngExt;
 

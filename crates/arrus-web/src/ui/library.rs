@@ -9,6 +9,8 @@ use crate::{edit, theme, util, web};
 
 #[derive(Default)]
 pub struct Library {
+    /// "Create your team" on the welcome screen.
+    first_team: String,
     pub items: Vec<ChoreographySummary>,
     pub loaded_for: Option<TeamId>,
     pub loading: bool,
@@ -35,14 +37,13 @@ struct ImportReport {
 }
 
 pub fn reload(app: &mut App) {
-    let url = if app.is_admin() {
-        match app.team {
-            Some(t) => format!("/api/choreographies?team={t}"),
-            None => return,
-        }
-    } else {
-        "/api/choreographies".to_owned()
+    let Some(t) = app.team else {
+        app.library.items.clear();
+        app.library.loaded_for = None;
+        app.library.loading = false;
+        return;
     };
+    let url = format!("/api/choreographies?team={t}");
     let team = app.team;
     app.library.loading = true;
     app.net.spawn(async move {
@@ -96,6 +97,7 @@ fn import_files(app: &mut App, files: Vec<web_sys::File>) {
                 if app.library.import.as_ref().is_some_and(|r| r.pending == 0) {
                     reload(app);
                     app.refresh_storage();
+                    app.reload_me();
                 }
             }
         });
@@ -113,6 +115,7 @@ fn create(app: &mut App, name: String, dancers: u32) {
             match r {
                 Ok(s) => {
                     app.refresh_storage();
+                    app.reload_me();
                     editor::open(app, s.id);
                 }
                 Err(e) => app.fail(e),
@@ -129,9 +132,59 @@ fn delete(app: &mut App, id: ChoreographyId) {
                 app.library.items.retain(|c| c.id != id);
                 app.toast("Choreography deleted");
                 app.refresh_storage();
+                app.reload_me();
             }
             Err(e) => app.fail(e),
         }
+    });
+}
+
+/// Accounts in no team yet: create one, or how to be added to one.
+fn welcome(app: &mut App, ui: &mut Ui) {
+    let Some(me) = app.me.clone() else { return };
+    ui.add_space(30.0);
+    ui.vertical_centered(|ui| {
+        ui.set_max_width(460.0);
+        ui.label(RichText::new(format!("Welcome, {}", me.username)).size(20.0).strong());
+        ui.add_space(6.0);
+        ui.label(RichText::new("You're not in a team yet.").color(theme::TEXT_WEAK));
+        ui.add_space(14.0);
+        if me.can_create_team {
+            widgets::card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new("Create your team").strong());
+                ui.horizontal(|ui| {
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut app.library.first_team).hint_text("Team name").desired_width(220.0),
+                    );
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let name = app.library.first_team.trim().to_owned();
+                    if (widgets::primary_button(ui, "Create").clicked() || enter) && !name.is_empty() {
+                        app.library.first_team.clear();
+                        app.create_team(name);
+                    }
+                });
+                if !me.premium {
+                    ui.label(
+                        RichText::new(format!(
+                            "Free accounts: {} team with up to {} choreographies.",
+                            arrus_api::FREE_TEAMS,
+                            arrus_api::FREE_CHOREOGRAPHIES
+                        ))
+                        .small()
+                        .color(theme::TEXT_WEAK),
+                    );
+                }
+            });
+            ui.add_space(10.0);
+        }
+        ui.label(
+            RichText::new(format!(
+                "To join someone's team, give them your nickname ({}) or open the share link they send you.",
+                me.username
+            ))
+            .color(theme::TEXT_WEAK),
+        );
     });
 }
 
@@ -139,6 +192,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let writer = app.can_edit();
     let compact = app.compact;
     let ctx = ui.ctx().clone();
+    let limit = app.choreography_limit();
+    let full = limit.is_some_and(|l| app.library.loaded_for.is_some() && app.library.items.len() as u32 >= l);
+    let full_tip = format!(
+        "This team is on the free plan: {} choreographies at most. Delete one, or ask for premium (unlimited).",
+        limit.unwrap_or(0)
+    );
 
     egui::CentralPanel::default()
         .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
@@ -148,12 +207,21 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 if let Some(t) = app.team_name() {
                     ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::TEXT_WEAK));
                 }
+                if let Some(l) = limit
+                    && app.library.loaded_for.is_some()
+                {
+                    let n = app.library.items.len();
+                    let color = if full { theme::WARN } else { theme::TEXT_FAINT };
+                    ui.label(RichText::new(format!("{n} of {l} (free plan)")).small().color(color)).on_hover_text(&full_tip);
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if writer {
-                        if widgets::primary_button(ui, "+ New").clicked() {
+                        let r = ui.add_enabled_ui(!full, |ui| widgets::primary_button(ui, "+ New")).inner;
+                        if r.on_disabled_hover_text(&full_tip).clicked() {
                             app.library.new_dialog = Some(NewDialog { name: String::new(), dancers: 8, busy: false });
                         }
-                        if ui.button("Import…").on_hover_text("Import .arrus files or an .aubkp backup from the ArrangeUs app").clicked() {
+                        let r = ui.add_enabled(!full, egui::Button::new("Import…"));
+                        if r.on_hover_text("Import .arrus files or an .aubkp backup from the ArrangeUs app").on_disabled_hover_text(&full_tip).clicked() {
                             let net = app.net.clone();
                             web::pick_files(".arrus,.aubkp", true, move |files| {
                                 net.post(move |app: &mut App| import_files(app, files));
@@ -170,12 +238,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 });
             });
             ui.add_space(6.0);
-            if app.is_admin() && app.team.is_none() {
-                ui.add_space(30.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No team yet.").size(16.0));
-                    ui.label(RichText::new("Create a team in Teams & members first.").color(theme::TEXT_WEAK));
-                });
+            if app.team.is_none() {
+                if app.is_admin() && app.my_teams().is_empty() && app.me.as_ref().is_some_and(|m| m.account_id.is_none()) {
+                    ui.add_space(30.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("No team yet.").size(16.0));
+                        ui.label(RichText::new("Create a team in All teams first.").color(theme::TEXT_WEAK));
+                    });
+                } else {
+                    welcome(app, ui);
+                }
                 return;
             }
             if app.library.items.len() > 6 {
@@ -191,7 +263,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         RichText::new(if writer {
                             "Create one with New, or import .arrus files shared from the ArrangeUs app."
                         } else {
-                            "Choreographies your team adds will appear here."
+                            "Choreographies the team's owner and co-owners add will appear here."
                         })
                         .color(theme::TEXT_WEAK),
                     );

@@ -66,6 +66,8 @@ pub struct Editor {
     pub drag: Option<stage::Drag>,
     pub easing: Easing,
     pub can_edit: bool,
+    /// The server says this account may change this choreography.
+    pub may_write: bool,
     pub compact: bool,
     pub scrubbing: bool,
     pub space_down: bool,
@@ -138,6 +140,7 @@ impl Editor {
         }
         let audio = d.summary.music.as_ref().and_then(|_| Audio::new(&music_url(&d.summary)));
         let live = live::Live::new(&doc, d.summary.revision, bg_data.clone());
+        let may_write = d.can_write;
         Self {
             summary: d.summary,
             doc,
@@ -161,6 +164,7 @@ impl Editor {
             drag: None,
             easing: Easing::Linear,
             can_edit: false,
+            may_write,
             compact,
             scrubbing: false,
             space_down: false,
@@ -601,7 +605,7 @@ pub fn pick_background(ed: &Editor, app: &App) {
 
 pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.now = ui.input(|i| i.time);
-    ed.can_edit = app.can_edit();
+    ed.can_edit = ed.may_write;
     ed.touch = app.touch;
     if ed.compact != app.compact {
         ed.compact = app.compact;

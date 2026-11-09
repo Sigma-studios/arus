@@ -288,8 +288,8 @@ mod tests {
 
     #[test]
     fn evaluate_persists_level() {
-        let conn = Connection::open_in_memory().unwrap();
-        db::init(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&mut conn).unwrap();
         assert_eq!(evaluate(&conn, 100, L).unwrap(), None);
         assert_eq!(evaluate(&conn, 810, L).unwrap(), Some(AlertKind::Crossed80));
         // a "restart" reading the same db does not re-alert
@@ -303,8 +303,8 @@ mod tests {
 
     #[test]
     fn storage_full_rate_limited() {
-        let conn = Connection::open_in_memory().unwrap();
-        db::init(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&mut conn).unwrap();
         assert!(storage_full_due(&conn, 10_000).unwrap());
         assert!(!storage_full_due(&conn, 10_100).unwrap());
         assert!(!storage_full_due(&conn, 10_000 + FULL_ALERT_INTERVAL - 1).unwrap());
@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn discord_settings_persist() {
-        let conn = Connection::open_in_memory().unwrap();
-        db::init(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&mut conn).unwrap();
         assert_eq!(Discord::load(&conn).unwrap(), Discord::default());
         let d = Discord { webhook: Some("https://discord.com/api/webhooks/1/abcd".into()), mention: Some("@here".into()) };
         d.save(&conn).unwrap();

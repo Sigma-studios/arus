@@ -1,5 +1,7 @@
 //! The application: session, top bar, screens, toasts and alerts.
 
+mod account;
+mod accounts;
 mod admin;
 mod editor;
 mod inspector;
@@ -7,10 +9,11 @@ mod library;
 mod live;
 mod net;
 mod stage;
+mod team;
 mod timeline;
 mod widgets;
 
-use arrus_api::{Me, Role, Storage, Team, TeamId};
+use arrus_api::{CreateTeam, FREE_CHOREOGRAPHIES, FREE_TEAMS, Me, MyTeam, Role, Storage, Team, TeamId, TeamRole};
 use egui::{Align, Align2, Frame, Id, Layout, Margin, RichText, Stroke, Ui, vec2};
 
 use crate::util::{self, Level};
@@ -20,8 +23,25 @@ pub use net::{ApiError, Net};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Library,
+    /// The current team: who is in it, share links.
+    Team,
+    /// Admin: every team, storage alerts.
     Admin,
+    /// Admin: every account.
+    Accounts,
     Editor,
+}
+
+impl Screen {
+    /// Its URL fragment.
+    fn hash(self) -> Option<&'static str> {
+        match self {
+            Screen::Team => Some("team"),
+            Screen::Admin => Some("admin"),
+            Screen::Accounts => Some("accounts"),
+            Screen::Library | Screen::Editor => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,13 +66,18 @@ pub struct App {
     pub me: Option<Me>,
     boot_error: Option<String>,
     pub storage: Option<Storage>,
-    /// Admin only.
+    /// Admin only: every team.
     pub teams: Vec<Team>,
-    /// The team shown (the member's own, or the admin's choice).
+    /// The team shown.
     pub team: Option<TeamId>,
     pub screen: Screen,
     pub library: library::Library,
     pub admin: admin::Admin,
+    pub accounts: accounts::Accounts,
+    pub team_ui: team::TeamUi,
+    pub account: account::AccountUi,
+    /// "New team" dialog: the name typed, and whether it is being created.
+    new_team: Option<(String, bool)>,
     pub editor: Option<Box<editor::Editor>>,
     /// Choreography being fetched for the editor.
     pub opening: Option<i64>,
@@ -81,6 +106,10 @@ impl App {
             screen: Screen::Library,
             library: Default::default(),
             admin: Default::default(),
+            accounts: Default::default(),
+            team_ui: Default::default(),
+            account: Default::default(),
+            new_team: None,
             editor: None,
             opening: None,
             toasts: Vec::new(),
@@ -101,18 +130,24 @@ impl App {
         match r {
             Ok(me) => {
                 let admin = me.role == Role::Admin;
-                self.team = me.team.as_ref().map(|t| t.id);
+                let wanted = web::hash_team();
                 self.me = Some(me);
                 self.refresh_storage();
+                let mine = self.my_teams().iter().map(|t| t.id).collect::<Vec<_>>();
+                let first = wanted.filter(|t| admin || mine.contains(t)).or_else(|| mine.first().copied());
+                self.set_team(first);
                 if admin {
                     self.load_teams();
-                } else {
-                    library::reload(self);
                 }
                 if let Some(id) = web::hash_choreography() {
                     editor::open(self, id);
-                } else if admin && web::hash_is_admin() {
-                    self.go(Screen::Admin);
+                } else {
+                    match web::hash_screen().as_deref() {
+                        Some("admin") if admin => self.go(Screen::Admin),
+                        Some("accounts") if admin => self.go(Screen::Accounts),
+                        Some("team") if self.team.is_some() => self.go(Screen::Team),
+                        _ => web::set_hash_screen(None),
+                    }
                 }
             }
             Err(ApiError::Unauthorized) => web::navigate("/login"),
@@ -120,21 +155,81 @@ impl App {
         }
     }
 
+    /// Fetch who is logged in again (teams, roles, limits changed).
+    pub fn reload_me(&mut self) {
+        self.net.spawn(async {
+            let r = net::get::<Me>("/api/me").await;
+            move |app: &mut App| match r {
+                Ok(me) => {
+                    app.me = Some(me);
+                    let ok = app.team.is_some_and(|id| app.is_admin() || app.my_teams().iter().any(|t| t.id == id));
+                    if !ok {
+                        let first = app.my_teams().first().map(|t| t.id);
+                        app.set_team(first);
+                        if app.screen == Screen::Team && app.team.is_none() {
+                            app.go(Screen::Library);
+                        }
+                    }
+                }
+                Err(e) => app.fail(e),
+            }
+        });
+    }
+
     pub fn is_admin(&self) -> bool {
         self.me.as_ref().is_some_and(|m| m.role == Role::Admin)
     }
 
-    /// May edit (has write access), on any device.
+    pub fn my_teams(&self) -> &[MyTeam] {
+        self.me.as_ref().map_or(&[], |m| m.teams.as_slice())
+    }
+
+    /// This account's role in the current team.
+    pub fn my_role(&self) -> Option<TeamRole> {
+        let id = self.team?;
+        self.my_teams().iter().find(|t| t.id == id).map(|t| t.role)
+    }
+
+    /// May change the current team's choreographies.
     pub fn can_edit(&self) -> bool {
-        self.me.as_ref().is_some_and(|m| m.can_write)
+        self.is_admin() || self.my_role().is_some_and(TeamRole::can_write)
+    }
+
+    /// May decide who is in the current team, rename or delete it.
+    pub fn can_manage(&self) -> bool {
+        self.team.is_some() && (self.is_admin() || self.my_role() == Some(TeamRole::Owner))
     }
 
     pub fn team_name(&self) -> Option<String> {
-        if let Some(t) = self.me.as_ref().and_then(|m| m.team.as_ref()) {
+        let id = self.team?;
+        if let Some(t) = self.my_teams().iter().find(|t| t.id == id) {
             return Some(t.name.clone());
         }
-        let id = self.team?;
         self.teams.iter().find(|t| t.id == id).map(|t| t.name.clone())
+    }
+
+    /// The current team's choreography limit (`None`: unlimited).
+    pub fn choreography_limit(&self) -> Option<u32> {
+        let id = self.team?;
+        match self.my_teams().iter().find(|t| t.id == id) {
+            Some(t) => t.choreography_limit,
+            None => self.teams.iter().find(|t| t.id == id).and_then(|t| t.choreography_limit),
+        }
+    }
+
+    /// Teams to switch between: all of them for the admin.
+    fn switchable_teams(&self) -> Vec<(TeamId, String)> {
+        if self.is_admin() {
+            let mut v: Vec<(TeamId, String)> = self.teams.iter().map(|t| (t.id, t.name.clone())).collect();
+            for t in self.my_teams() {
+                if !v.iter().any(|(id, _)| *id == t.id) {
+                    v.push((t.id, t.name.clone()));
+                }
+            }
+            v
+        } else {
+            self.my_teams().iter().map(|t| (t.id, t.name.clone())).collect()
+        }
     }
 
     pub fn load_teams(&mut self) {
@@ -144,7 +239,7 @@ impl App {
                 Ok(teams) => {
                     app.teams = teams;
                     if app.team.is_none_or(|id| !app.teams.iter().any(|t| t.id == id)) {
-                        let first = app.teams.first().map(|t| t.id);
+                        let first = app.my_teams().first().map(|t| t.id).or_else(|| app.teams.first().map(|t| t.id));
                         app.set_team(first);
                     }
                 }
@@ -159,13 +254,35 @@ impl App {
         if changed {
             self.library.items.clear();
             self.library.loaded_for = None;
-            self.admin.members.clear();
-            self.admin.members_for = None;
+            self.team_ui = Default::default();
         }
         library::reload(self);
-        if self.is_admin() {
-            admin::load_members(self);
+        if matches!(self.screen, Screen::Team | Screen::Admin) {
+            team::load(self);
         }
+    }
+
+    /// Create a team (owned by this account), then switch to it.
+    pub fn create_team(&mut self, name: String) {
+        self.net.spawn(async move {
+            let r = net::send::<_, Team>("POST", "/api/teams", &CreateTeam { name }).await;
+            move |app: &mut App| {
+                app.new_team = None;
+                match r {
+                    Ok(t) => {
+                        app.toast(format!("Team “{}” created", t.name));
+                        let id = t.id;
+                        if app.is_admin() {
+                            app.teams.push(t);
+                            app.load_teams();
+                        }
+                        app.reload_me();
+                        app.set_team(Some(id));
+                    }
+                    Err(e) => app.fail(e),
+                }
+            }
+        });
     }
 
     pub fn refresh_storage(&mut self) {
@@ -190,6 +307,18 @@ impl App {
                         .into(),
                 });
                 self.refresh_storage();
+            }
+            ApiError::Http { code: Some(c), .. } if c.starts_with("limit_") => {
+                let text = if c == "limit_teams" {
+                    format!("A free account can create {FREE_TEAMS} team. Premium accounts can create as many as they like.")
+                } else {
+                    format!(
+                        "A team of a free account holds {FREE_CHOREOGRAPHIES} choreographies. Delete one first, \
+                         or ask for premium (unlimited)."
+                    )
+                };
+                self.alert = Some(Alert { title: "Free account limit".into(), text });
+                self.reload_me();
             }
             e => self.toast_error(e.to_string()),
         }
@@ -219,14 +348,16 @@ impl App {
             self.close_editor();
         }
         self.screen = to;
-        web::set_hash_admin(to == Screen::Admin);
+        web::set_hash_screen(to.hash());
         match to {
             Screen::Library => library::reload(self),
+            Screen::Team => team::load(self),
             Screen::Admin => {
                 self.load_teams();
-                admin::load_members(self);
+                team::load(self);
                 admin::load_alerts(self);
             }
+            Screen::Accounts => accounts::load(self),
             Screen::Editor => {}
         }
     }
@@ -260,69 +391,45 @@ impl App {
                     ui.add_space(if compact { 2.0 } else { 14.0 });
                     let in_editor = self.screen == Screen::Editor;
                     // On compact layouts the library is the only screen (the
-                    // editor has its own back button), so skip the nav button.
-                    if !compact && ui.add(egui::Button::selectable(self.screen == Screen::Library, "Library")).clicked() {
-                        self.go(Screen::Library);
-                    }
-                    if self.is_admin()
-                        && !compact
-                        && ui.add(egui::Button::selectable(self.screen == Screen::Admin, "Teams & members")).clicked()
-                    {
-                        self.go(Screen::Admin);
-                    }
+                    // editor has its own back button); the rest is in the user menu.
                     if !compact {
+                        if ui.add(egui::Button::selectable(self.screen == Screen::Library, "Library")).clicked() {
+                            self.go(Screen::Library);
+                        }
+                        if self.team.is_some()
+                            && ui.add(egui::Button::selectable(self.screen == Screen::Team, "Team")).on_hover_text("Who is in this team, share links").clicked()
+                        {
+                            self.go(Screen::Team);
+                        }
+                        if self.is_admin() {
+                            if ui.add(egui::Button::selectable(self.screen == Screen::Admin, "All teams")).clicked() {
+                                self.go(Screen::Admin);
+                            }
+                            if ui.add(egui::Button::selectable(self.screen == Screen::Accounts, "Accounts")).clicked() {
+                                self.go(Screen::Accounts);
+                            }
+                        }
                         ui.add_space(8.0);
                     }
-                    if self.is_admin() {
-                        let current = self.team_name().unwrap_or_else(|| "No team".into());
-                        let mut pick = None;
-                        ui.add_enabled_ui(!in_editor, |ui| {
-                            egui::ComboBox::from_id_salt("team_select")
-                                .selected_text(if compact { RichText::new(current) } else { RichText::new(format!("Team: {current}")) })
-                                .truncate()
-                                .width(if compact { 110.0 } else { 200.0 })
-                                .show_ui(ui, |ui| {
-                                    for t in &self.teams {
-                                        if ui.add(egui::Button::selectable(Some(t.id) == self.team, &t.name)).clicked() {
-                                            pick = Some(t.id);
-                                        }
-                                    }
-                                    if self.teams.is_empty() {
-                                        ui.label(RichText::new("No teams yet").color(theme::TEXT_WEAK));
-                                    }
-                                })
-                                .response
-                                .on_disabled_hover_text("Leave the editor to switch teams");
-                        });
-                        if let Some(id) = pick {
-                            self.set_team(Some(id));
-                        }
-                    } else if let Some(name) = self.team_name()
-                        && !compact
-                    {
-                        ui.label(RichText::new(name).color(theme::TEXT_WEAK));
-                    }
+                    self.team_switcher(ui, in_editor);
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        self.user_menu(ui);
                         if compact {
-                            self.user_menu(ui);
                             widgets::fullscreen_button(ui);
                             return;
                         }
-                        if ui.button("Log out").clicked() {
-                            self.logout();
-                        }
                         if let Some(me) = &self.me {
-                            if !compact {
-                                ui.label(RichText::new(&me.username).strong());
-                            }
                             if me.role == Role::Admin {
                                 widgets::badge(ui, "ADMIN", theme::SELECT);
-                            } else if !me.can_write {
-                                widgets::badge(ui, "VIEWER", theme::TEXT_WEAK);
+                            } else if me.premium {
+                                widgets::badge(ui, "PREMIUM", theme::ACCENT);
+                            }
+                            if self.team.is_some() && !self.can_edit() {
+                                widgets::badge(ui, "GUEST", theme::TEXT_WEAK);
                             }
                         }
-                        if !compact && let Some(s) = &self.storage {
+                        if let Some(s) = &self.storage {
                             ui.add_space(10.0);
                             storage_meter(ui, s);
                         }
@@ -331,34 +438,132 @@ impl App {
             });
     }
 
-    /// Compact layouts: user, team, storage and logout behind one button.
+    fn team_switcher(&mut self, ui: &mut Ui, in_editor: bool) {
+        let compact = self.compact;
+        let teams = self.switchable_teams();
+        let can_create = self.me.as_ref().is_some_and(|m| m.can_create_team);
+        if teams.is_empty() && !can_create {
+            return;
+        }
+        let current = self.team_name().unwrap_or_else(|| "No team".into());
+        let mut pick = None;
+        let mut new_team = false;
+        ui.add_enabled_ui(!in_editor, |ui| {
+            egui::ComboBox::from_id_salt("team_select")
+                .selected_text(if compact { RichText::new(current) } else { RichText::new(format!("Team: {current}")) })
+                .truncate()
+                .width(if compact { 110.0 } else { 200.0 })
+                .show_ui(ui, |ui| {
+                    for (id, name) in &teams {
+                        if ui.add(egui::Button::selectable(Some(*id) == self.team, name)).clicked() {
+                            pick = Some(*id);
+                        }
+                    }
+                    if teams.is_empty() {
+                        ui.label(RichText::new("No teams yet").color(theme::TEXT_WEAK));
+                    }
+                    if can_create {
+                        ui.separator();
+                        if ui.button("+ New team…").clicked() {
+                            new_team = true;
+                        }
+                    }
+                })
+                .response
+                .on_disabled_hover_text("Leave the editor to switch teams");
+        });
+        if let Some(id) = pick {
+            self.set_team(Some(id));
+        }
+        if new_team {
+            self.new_team = Some((String::new(), false));
+        }
+    }
+
+    /// Who is logged in, their account settings, and (on phones) the screens.
     fn user_menu(&mut self, ui: &mut Ui) {
         let Some(me) = self.me.clone() else { return };
         let mut logout = false;
+        let mut goto = None;
+        let compact = self.compact;
         ui.menu_button(RichText::new(&me.username).strong(), |ui| {
-            ui.set_min_width(220.0);
+            ui.set_min_width(230.0);
             ui.label(RichText::new(&me.username).strong());
-            let role = match (me.role, me.can_write) {
+            let plan = match (me.role, me.premium) {
                 (Role::Admin, _) => "Admin",
-                (_, true) => "Member (can edit)",
-                (_, false) => "Viewer",
+                (_, true) => "Premium account",
+                (_, false) => "Free account",
             };
-            ui.label(RichText::new(role).small().color(theme::TEXT_WEAK));
-            if let Some(t) = self.team_name() {
-                ui.label(RichText::new(format!("Team: {t}")).small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new(plan).small().color(theme::TEXT_WEAK));
+            if let Some(e) = &me.email {
+                ui.label(RichText::new(e).small().color(theme::TEXT_WEAK));
             }
-            if let Some(s) = &self.storage {
+            if let (Some(t), Some(role)) = (self.team_name(), self.my_role()) {
+                ui.label(RichText::new(format!("{t}: {}", role.label())).small().color(theme::TEXT_WEAK));
+            }
+            if compact && let Some(s) = &self.storage {
                 ui.add_space(6.0);
                 storage_meter(ui, s);
             }
             ui.separator();
+            if compact {
+                if self.team.is_some() && ui.button("Team").clicked() {
+                    goto = Some(Screen::Team);
+                    ui.close();
+                }
+                if me.role == Role::Admin {
+                    if ui.button("All teams").clicked() {
+                        goto = Some(Screen::Admin);
+                        ui.close();
+                    }
+                    if ui.button("Accounts").clicked() {
+                        goto = Some(Screen::Accounts);
+                        ui.close();
+                    }
+                }
+            }
+            if me.account_id.is_some() && ui.button("Account settings…").clicked() {
+                account::open(self);
+                ui.close();
+            }
             if ui.button("Log out").clicked() {
                 logout = true;
                 ui.close();
             }
         });
+        if let Some(to) = goto {
+            self.go(to);
+        }
         if logout {
             self.logout();
+        }
+    }
+
+    fn new_team_dialog(&mut self, ctx: &egui::Context) {
+        let Some((name, busy)) = &mut self.new_team else { return };
+        let valid = !name.trim().is_empty() && !*busy;
+        let mut enter = false;
+        let c = widgets::dialog(ctx, "new_team", "New team", "Create", false, valid, |ui| {
+            ui.label("Name");
+            let r = ui.add(egui::TextEdit::singleline(name).hint_text("e.g. Unicup").desired_width(f32::INFINITY));
+            if !r.has_focus() && name.is_empty() {
+                r.request_focus();
+            }
+            enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.label(RichText::new("You are its owner: add people by nickname or with a share link.").small().color(theme::TEXT_WEAK));
+        });
+        let name = name.trim().to_owned();
+        match c {
+            Some(widgets::Choice::Confirm) => {
+                self.new_team = Some((name.clone(), true));
+                self.create_team(name);
+            }
+            None if enter && valid => {
+                self.new_team = Some((name.clone(), true));
+                self.create_team(name);
+            }
+            Some(widgets::Choice::Cancel) => self.new_team = None,
+            None => {}
         }
     }
 
@@ -498,7 +703,9 @@ impl eframe::App for App {
         }
         match self.screen {
             Screen::Library => library::show(self, ui),
+            Screen::Team => team::show(self, ui),
             Screen::Admin => admin::show(self, ui),
+            Screen::Accounts => accounts::show(self, ui),
             Screen::Editor => {
                 if let Some(mut ed) = self.editor.take() {
                     editor::show(&mut ed, self, ui);
@@ -512,6 +719,8 @@ impl eframe::App for App {
                 }
             }
         }
+        self.new_team_dialog(&ctx);
+        account::dialog(self, &ctx);
         self.toasts_ui(&ctx);
         self.alerts_ui(&ctx);
         web::set_unsaved(self.editor.as_ref().is_some_and(|e| e.dirty));

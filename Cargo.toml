@@ -20,3 +20,10 @@ lto = "thin"
 
 [profile.release.package.arrus-web]
 opt-level = "s"
+
+# Password hashing is far too slow unoptimised (tests log in a lot).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

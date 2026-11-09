@@ -83,6 +83,11 @@ pub fn writable(conn: &Connection, user: &User, id: i64) -> Result<db::ChoreoMet
     Ok(meta)
 }
 
+/// The team a request means: the one it names, or an account's only team.
+pub fn team_of(user: &User, named: Option<i64>) -> Result<i64> {
+    named.or_else(|| user.default_team()).ok_or_else(|| Error::bad_request("name the team (team_id / ?team=)"))
+}
+
 pub fn summary(conn: &Connection, id: i64) -> Result<ChoreographySummary> {
     db::summary(conn, id)?.ok_or_else(Error::not_found)
 }
@@ -98,12 +103,8 @@ pub async fn list(
     auth: Auth,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<ChoreographySummary>>> {
-    let team_id = match (&auth.user, q.team) {
-        (User::Admin, Some(t)) => t,
-        (User::Admin, None) => return Err(Error::bad_request("the admin must pass ?team=<id>")),
-        (User::Member { team_id, .. }, Some(t)) if t != *team_id => return Err(Error::not_found()),
-        (User::Member { team_id, .. }, _) => *team_id,
-    };
+    let team_id = team_of(&auth.user, q.team)?;
+    auth.user.check_read(team_id)?;
     state
         .db(move |_, conn| {
             if !db::team_exists(conn, team_id)? {
@@ -124,11 +125,7 @@ pub async fn create(
     auth: Auth,
     ApiJson(body): ApiJson<CreateChoreography>,
 ) -> Result<Json<ChoreographySummary>> {
-    let team_id = match (&auth.user, body.team_id) {
-        (User::Admin, Some(t)) => t,
-        (User::Admin, None) => return Err(Error::bad_request("the admin must pass team_id")),
-        (User::Member { team_id, .. }, _) => *team_id,
-    };
+    let team_id = team_of(&auth.user, body.team_id)?;
     auth.user.check_write(team_id)?;
     let now = db::now();
     let mut data = body.data;
@@ -142,6 +139,7 @@ pub async fn create(
             if !db::team_exists(conn, team_id)? {
                 return Err(Error::not_found());
             }
+            db::ensure_choreography_room(conn, team_id, 1)?;
             storage::ensure_fits(s, conn, 0, stored.size())?;
             let id = insert(conn, team_id, &stored, &by, now)?;
             storage::after_change(s, conn)?;
@@ -151,16 +149,18 @@ pub async fn create(
 }
 
 pub async fn get(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<Json<ChoreographyDoc>> {
+    let user = auth.user.clone();
     let (summary, json) = state
         .db(move |_, conn| {
-            readable(conn, &auth.user, id)?;
+            readable(conn, &user, id)?;
             let json: Option<String> =
                 conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0)).optional()?;
             Ok((summary(conn, id)?, json.ok_or_else(Error::not_found)?))
         })
         .await?;
     let data: Choreography = serde_json::from_str(&json).map_err(Error::internal)?;
-    Ok(Json(ChoreographyDoc { summary, data }))
+    let can_write = auth.user.check_write(summary.team_id).is_ok();
+    Ok(Json(ChoreographyDoc { summary, data, can_write }))
 }
 
 /// Store `data` as the next revision of choreography `id` (write access and

@@ -140,17 +140,52 @@ impl T {
         r.json()
     }
 
-    async fn member(&self, admin: &str, team: TeamId, username: &str, can_write: bool) -> Member {
-        let r = self
-            .call(
-                Method::POST,
-                &format!("/api/teams/{team}/members"),
-                Some(admin),
-                Some(CreateMember { username: username.into(), can_write }),
-            )
-            .await;
+    /// An account made by the admin (generated password).
+    async fn account(&self, admin: &str, nickname: &str) -> AccountInfo {
+        let body = CreateAccount { nickname: nickname.into(), ..Default::default() };
+        let r = self.call(Method::POST, "/api/accounts", Some(admin), Some(body)).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.text());
         r.json()
+    }
+
+    /// An account in `team`: co-owner if `can_write`, guest otherwise.
+    async fn member(&self, admin: &str, team: TeamId, nickname: &str, can_write: bool) -> M {
+        let a = self.account(admin, nickname).await;
+        let role = if can_write { TeamRole::CoOwner } else { TeamRole::Guest };
+        let body = AddTeamMember { nickname: nickname.into(), role };
+        let r = self.call(Method::POST, &format!("/api/teams/{team}/members"), Some(admin), Some(body)).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        M { id: a.id, password: a.password.unwrap() }
+    }
+
+    async fn signup_resp(&self, nickname: &str, email: &str, pw: &str, pw2: &str, next: &str) -> Resp {
+        let enc = |v: &str| percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let body = format!(
+            "nickname={}&email={}&password={}&password2={}&next={}",
+            enc(nickname),
+            enc(email),
+            enc(pw),
+            enc(pw2),
+            enc(next)
+        );
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/signup")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+        self.send(req).await
+    }
+
+    /// Sign up; returns the session.
+    async fn signup(&self, nickname: &str, email: &str, pw: &str) -> String {
+        let r = self.signup_resp(nickname, email, pw, pw, "").await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+        cookie_of(&r)
+    }
+
+    async fn me(&self, cookie: &str) -> Me {
+        self.get("/api/me", cookie).await.json()
     }
 
     async fn create(&self, cookie: &str, team_id: Option<TeamId>, data: Choreography) -> Resp {
@@ -164,6 +199,16 @@ impl T {
     fn music_files(&self) -> usize {
         std::fs::read_dir(self.dir.path().join("music")).unwrap().count()
     }
+}
+
+struct M {
+    id: AccountId,
+    password: String,
+}
+
+fn cookie_of(r: &Resp) -> String {
+    let cookie = r.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    cookie.split(';').next().unwrap().strip_prefix("arus_session=").unwrap().to_string()
 }
 
 fn sample() -> Choreography {
@@ -187,9 +232,10 @@ async fn login_logout_and_cookie_flags() {
     let html = r.text();
     assert!(html.contains("<title>arus</title>"));
     assert!(html.contains(r#"autocomplete="username""#) && html.contains(r#"autocomplete="current-password""#));
-    assert!(!html.contains("Wrong username"));
+    assert!(!html.contains("Wrong nickname"));
+    assert!(html.contains(r#"href="/signup""#));
     let r = t.send(Request::get("/login?error=1").body(Body::empty()).unwrap()).await;
-    assert!(r.text().contains("Wrong username"));
+    assert!(r.text().contains("Wrong nickname"));
 
     // failure
     let started = std::time::Instant::now();
@@ -212,7 +258,7 @@ async fn login_logout_and_cookie_flags() {
     assert_eq!(token.len(), 64);
 
     let me: Me = t.get("/api/me", &token).await.json();
-    assert_eq!(me, Me { username: "admin".into(), role: Role::Admin, team: None, can_write: true });
+    assert_eq!((me.username.as_str(), me.role, me.account_id, me.teams.len()), ("admin", Role::Admin, None, 0));
 
     // logged in: /login redirects, / serves the app
     let r = t
@@ -310,97 +356,279 @@ async fn csrf_header_required() {
 }
 
 #[tokio::test]
-async fn teams_and_members() {
+async fn admin_manages_accounts() {
     let t = T::new();
     let admin = t.admin().await;
     let team = t.team(&admin, "  Crew A ").await;
     assert_eq!(team.name, "Crew A");
-    assert_eq!((team.member_count, team.choreography_count, team.bytes_used), (0, 0, 0));
+    assert_eq!((team.member_count, team.choreography_count, team.bytes_used, team.owner_id), (0, 0, 0, None));
+    assert_eq!(team.choreography_limit, None);
     let r = t.call(Method::POST, "/api/teams", Some(&admin), Some(CreateTeam { name: "crew a".into() })).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
 
-    let m = t.member(&admin, team.id, " Alice ", true).await;
-    assert_eq!(m.username, "Alice");
-    assert_eq!(m.team_id, team.id);
-    let parts: Vec<&str> = m.password.split('-').collect();
-    assert_eq!(parts.len(), 3, "{}", m.password);
-    assert!(parts[0].chars().all(|c| c.is_ascii_lowercase()) && parts[1].chars().all(|c| c.is_ascii_lowercase()));
+    let a = t.account(&admin, " Alice ").await;
+    assert_eq!(a.nickname, "Alice");
+    let pw = a.password.clone().unwrap();
+    let parts: Vec<&str> = pw.split('-').collect();
+    assert_eq!(parts.len(), 3, "{pw}");
     assert!(parts[2].len() == 2 && parts[2].parse::<u32>().is_ok());
 
-    // usernames: unique case-insensitively, not admin, valid chars
+    // nicknames: unique case-insensitively, not admin, valid chars
     for (name, status) in [
         ("alice", StatusCode::CONFLICT),
         ("ADMIN", StatusCode::CONFLICT),
         ("bad name", StatusCode::BAD_REQUEST),
+        ("a@b.c", StatusCode::BAD_REQUEST),
         ("", StatusCode::BAD_REQUEST),
         (&"x".repeat(41), StatusCode::BAD_REQUEST),
     ] {
-        let r = t
-            .call(
-                Method::POST,
-                &format!("/api/teams/{}/members", team.id),
-                Some(&admin),
-                Some(CreateMember { username: name.into(), can_write: false }),
-            )
-            .await;
+        let body = CreateAccount { nickname: name.into(), ..Default::default() };
+        let r = t.call(Method::POST, "/api/accounts", Some(&admin), Some(body)).await;
         assert_eq!(r.status, status, "{name}");
     }
-    let r = t
-        .call(
-            Method::POST,
-            &format!("/api/teams/{}/members", team.id),
-            Some(&admin),
-            Some(CreateMember { username: "ALICE".into(), can_write: false }),
-        )
-        .await;
-    assert_eq!(r.error().code.as_deref(), Some("username_taken"));
 
-    // the member logs in (case-insensitive username)
-    let alice = t.login("aLiCe", &m.password).await;
-    let me: Me = t.get("/api/me", &alice).await.json();
-    assert_eq!(me.role, Role::Member);
-    assert_eq!(me.team, Some(TeamRef { id: team.id, name: "Crew A".into() }));
-    assert!(me.can_write);
-    // members cannot manage teams
+    // into the team as co-owner; logs in with any case
+    let body = AddTeamMember { nickname: "ALICE".into(), role: TeamRole::CoOwner };
+    let r = t.call(Method::POST, &format!("/api/teams/{}/members", team.id), Some(&admin), Some(body)).await;
+    assert_eq!(r.json::<TeamMember>(), TeamMember { account_id: a.id, nickname: "Alice".into(), role: TeamRole::CoOwner });
+    let body = AddTeamMember { nickname: "nobody".into(), role: TeamRole::Guest };
+    let r = t.call(Method::POST, &format!("/api/teams/{}/members", team.id), Some(&admin), Some(body)).await;
+    assert_eq!(r.error().code.as_deref(), Some("no_such_account"));
+    let alice = t.login("aLiCe", &pw).await;
+    let me = t.me(&alice).await;
+    assert_eq!((me.role, me.account_id, me.premium, me.can_create_team), (Role::Member, Some(a.id), false, true));
+    assert_eq!(me.teams.len(), 1);
+    assert_eq!((me.teams[0].id, me.teams[0].role, me.teams[0].choreography_limit), (team.id, TeamRole::CoOwner, None));
+    // accounts cannot see the admin's lists
     assert_eq!(t.get("/api/teams", &alice).await.status, StatusCode::FORBIDDEN);
-    let r = t.call(Method::POST, "/api/teams", Some(&alice), Some(CreateTeam { name: "X".into() })).await;
+    assert_eq!(t.get("/api/accounts", &alice).await.status, StatusCode::FORBIDDEN);
+    // nor manage a team they do not own
+    let r = t.call(Method::PATCH, &format!("/api/teams/{}", team.id), Some(&alice), Some(UpdateTeam { name: "X".into() })).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
-    let teams: Vec<Team> = t.get("/api/teams", &admin).await.json();
-    assert_eq!(teams.len(), 1);
-    assert_eq!(teams[0].member_count, 1);
-    let members: Vec<Member> = t.get(&format!("/api/teams/{}/members", team.id), &admin).await.json();
-    assert_eq!(members, vec![m.clone()]);
+    // the admin adds an email: login by email works too
+    let upd = UpdateAccount { email: Some(" Alice@Example.com ".into()), ..Default::default() };
+    let a2: AccountInfo = t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await.json();
+    assert_eq!(a2.email.as_deref(), Some("Alice@Example.com"));
+    t.login("alice@example.COM", &pw).await;
+    let upd = UpdateAccount { email: Some("not-an-email".into()), ..Default::default() };
+    let r = t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
 
-    // rename the team
-    let r = t
-        .call(Method::PATCH, &format!("/api/teams/{}", team.id), Some(&admin), Some(UpdateTeam { name: "Crew B".into() }))
-        .await;
-    assert_eq!(r.json::<Team>().name, "Crew B");
+    // the list shows everything, with teams and their choreographies
+    let s: ChoreographySummary = t.create(&alice, None, sample()).await.json();
+    let all: Vec<AccountInfo> = t.get("/api/accounts", &admin).await.json();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].password.as_deref(), Some(pw.as_str()));
+    assert_eq!(all[0].teams.len(), 1);
+    assert_eq!(all[0].teams[0].choreographies, vec![ChoreographyRef { id: s.id, name: s.name.clone() }]);
 
-    // update: can_write takes effect immediately
-    let upd = UpdateMember { can_write: Some(false), username: Some("alice2".into()), ..Default::default() };
-    let m2: Member = t.call(Method::PATCH, &format!("/api/members/{}", m.id), Some(&admin), Some(upd)).await.json();
-    assert_eq!((m2.username.as_str(), m2.can_write, m2.password.as_str()), ("alice2", false, m.password.as_str()));
-    assert!(!t.get("/api/me", &alice).await.json::<Me>().can_write);
-
-    // regenerating the password ends sessions
-    let upd = UpdateMember { regenerate_password: true, ..Default::default() };
-    let m3: Member = t.call(Method::PATCH, &format!("/api/members/{}", m.id), Some(&admin), Some(upd)).await.json();
-    assert_ne!(m3.password, m.password);
+    // a password set by the admin: visible, sessions end
+    let upd = UpdateAccount { password: Some("Brand-New-Pass".into()), ..Default::default() };
+    let a3: AccountInfo = t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await.json();
+    assert_eq!(a3.password.as_deref(), Some("Brand-New-Pass"));
     assert_eq!(t.get("/api/me", &alice).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(t.login_resp("alice2", &m.password).await.location(), "/login?error=1");
+    assert_eq!(t.login_resp("alice", &pw).await.location(), "/login?error=1");
+    let alice = t.login("alice", "brand-new-pass").await;
+    let upd = UpdateAccount { regenerate_password: true, ..Default::default() };
+    let a4: AccountInfo = t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await.json();
+    assert_ne!(a4.password, a3.password);
+    assert_eq!(t.get("/api/me", &alice).await.status, StatusCode::UNAUTHORIZED);
     // typed with a capital first letter (phone keyboards) still works
-    let mut typed = m3.password.clone();
+    let mut typed = a4.password.clone().unwrap();
     typed[..1].make_ascii_uppercase();
-    let alice = t.login("alice2", &typed).await;
+    let alice = t.login("alice", &typed).await;
 
-    // deleting the member ends sessions
-    let r = t.call(Method::DELETE, &format!("/api/members/{}", m.id), Some(&admin), None::<()>).await;
+    // admin rights: the account sees and manages everything
+    let upd = UpdateAccount { is_admin: Some(true), ..Default::default() };
+    t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await;
+    assert_eq!(t.me(&alice).await.role, Role::Admin);
+    assert_eq!(t.get("/api/accounts", &alice).await.status, StatusCode::OK);
+    let upd = UpdateAccount { is_admin: Some(false), ..Default::default() };
+    let r = t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&alice), Some(upd)).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "cannot drop own admin rights");
+    let upd = UpdateAccount { is_admin: Some(false), ..Default::default() };
+    t.call(Method::PATCH, &format!("/api/accounts/{}", a.id), Some(&admin), Some(upd)).await;
+    assert_eq!(t.get("/api/accounts", &alice).await.status, StatusCode::FORBIDDEN);
+
+    // deleting the account ends sessions; the admin's team stays
+    let r = t.call(Method::DELETE, &format!("/api/accounts/{}", a.id), Some(&admin), None::<()>).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
     assert_eq!(t.get("/api/me", &alice).await.status, StatusCode::UNAUTHORIZED);
-    let r = t.call(Method::DELETE, &format!("/api/members/{}", m.id), Some(&admin), None::<()>).await;
+    let r = t.call(Method::DELETE, &format!("/api/accounts/{}", a.id), Some(&admin), None::<()>).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let teams: Vec<Team> = t.get("/api/teams", &admin).await.json();
+    assert_eq!((teams.len(), teams[0].member_count, teams[0].choreography_count), (1, 0, 1));
+}
+
+#[tokio::test]
+async fn signup_limits_and_premium() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let r = t.send(Request::get("/signup").body(Body::empty()).unwrap()).await;
+    assert!(r.text().contains(r#"name="password2""#));
+
+    // validation re-shows the form with the error and what was typed
+    let r = t.signup_resp("bob", "bob@example.com", "short", "short", "").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(r.text().contains("at least 8") && r.text().contains(r#"value="bob@example.com""#));
+    let r = t.signup_resp("bob", "bob@example.com", "password1", "password2", "").await;
+    assert!(r.text().contains("different"));
+    let r = t.signup_resp("bob", "", "password1", "password1", "").await;
+    assert!(r.text().contains("enter your email"));
+    let r = t.signup_resp("<b>", "x@y.z", "password1", "password1", "").await;
+    assert!(!r.text().contains("<b>") && r.text().contains("&lt;b&gt;"));
+
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let r = t.signup_resp("BOB", "other@example.com", "password1", "password1", "").await;
+    assert!(r.text().contains("nickname is already taken"));
+    let r = t.signup_resp("bobby", "BOB@example.com", "password1", "password1", "").await;
+    assert!(r.text().contains("already uses that email"));
+    // the chosen password is case-sensitive and never shown to the admin
+    t.login("bob@example.com", "correct horse").await;
+    assert_eq!(t.login_resp("bob", "Correct horse").await.location(), "/login?error=1");
+    let all: Vec<AccountInfo> = t.get("/api/accounts", &admin).await.json();
+    assert_eq!(all[0].password, None);
+
+    // one team, two choreographies
+    let me = t.me(&bob).await;
+    assert!(me.teams.is_empty() && me.can_create_team && !me.premium);
+    let team: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "Bob's".into() })).await.json();
+    assert_eq!((team.owner.as_deref(), team.choreography_limit), (Some("bob"), Some(FREE_CHOREOGRAPHIES)));
+    let me = t.me(&bob).await;
+    assert!(!me.can_create_team);
+    assert_eq!((me.teams[0].role, me.teams[0].choreography_limit), (TeamRole::Owner, Some(2)));
+    let r = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "Two".into() })).await;
+    assert_eq!((r.status, r.error().code.as_deref()), (StatusCode::FORBIDDEN, Some("limit_teams")));
+    for _ in 0..2 {
+        assert_eq!(t.create(&bob, Some(team.id), sample()).await.status, StatusCode::OK);
+    }
+    let r = t.create(&bob, Some(team.id), sample()).await;
+    assert_eq!((r.status, r.error().code.as_deref()), (StatusCode::FORBIDDEN, Some("limit_choreographies")));
+    // the admin's teams have no limit, whoever creates in them
+    let crew = t.team(&admin, "Crew").await;
+    for _ in 0..3 {
+        assert_eq!(t.create(&admin, Some(crew.id), sample()).await.status, StatusCode::OK);
+    }
+
+    // premium lifts both limits
+    let upd = UpdateAccount { is_premium: Some(true), ..Default::default() };
+    t.call(Method::PATCH, &format!("/api/accounts/{}", me.account_id.unwrap()), Some(&admin), Some(upd)).await;
+    assert!(t.me(&bob).await.can_create_team);
+    assert_eq!(t.create(&bob, Some(team.id), sample()).await.status, StatusCode::OK);
+    let r = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "Two".into() })).await;
+    assert_eq!(r.status, StatusCode::OK);
+    // back to free: nothing is deleted, but nothing more fits
+    let upd = UpdateAccount { is_premium: Some(false), ..Default::default() };
+    t.call(Method::PATCH, &format!("/api/accounts/{}", me.account_id.unwrap()), Some(&admin), Some(upd)).await;
+    assert_eq!(t.create(&bob, Some(team.id), sample()).await.status, StatusCode::FORBIDDEN);
+    let list: Vec<ChoreographySummary> = t.get(&format!("/api/choreographies?team={}", team.id), &bob).await.json();
+    assert_eq!(list.len(), 3);
+
+    // own details: needs the current password
+    let upd = UpdateMe { current_password: "nope".into(), email: Some("new@example.com".into()), ..Default::default() };
+    let r = t.call(Method::PATCH, "/api/me", Some(&bob), Some(upd)).await;
+    assert_eq!(r.error().code.as_deref(), Some("wrong_password"));
+    let other = t.login("bob", "correct horse").await;
+    let upd = UpdateMe {
+        current_password: "correct horse".into(),
+        email: Some("new@example.com".into()),
+        new_password: Some("battery staple".into()),
+        ..Default::default()
+    };
+    let me: Me = t.call(Method::PATCH, "/api/me", Some(&bob), Some(upd)).await.json();
+    assert_eq!(me.email.as_deref(), Some("new@example.com"));
+    assert_eq!(t.get("/api/me", &bob).await.status, StatusCode::OK, "this session stays");
+    assert_eq!(t.get("/api/me", &other).await.status, StatusCode::UNAUTHORIZED, "others end");
+    t.login("new@example.com", "battery staple").await;
+
+    // deleting the account deletes the teams it owns
+    t.call(Method::DELETE, &format!("/api/accounts/{}", me.account_id.unwrap()), Some(&admin), None::<()>).await;
+    let teams: Vec<Team> = t.get("/api/teams", &admin).await.json();
+    assert_eq!(teams.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["Crew"]);
+}
+
+#[tokio::test]
+async fn owners_invite_and_set_roles() {
+    let t = T::new();
+    let owner = t.signup("olga", "olga@example.com", "password-o").await;
+    let guest = t.signup("gus", "gus@example.com", "password-g").await;
+    let carl = t.signup("carl", "carl@example.com", "password-c").await;
+    let team: Team = t.call(Method::POST, "/api/teams", Some(&owner), Some(CreateTeam { name: "Olga's".into() })).await.json();
+    let members = format!("/api/teams/{}/members", team.id);
+
+    // by nickname
+    let body = AddTeamMember { nickname: "Gus".into(), role: TeamRole::Guest };
+    let gm: TeamMember = t.call(Method::POST, &members, Some(&owner), Some(body)).await.json();
+    let body = AddTeamMember { nickname: "carl".into(), role: TeamRole::Owner };
+    assert_eq!(t.call(Method::POST, &members, Some(&owner), Some(body)).await.status, StatusCode::BAD_REQUEST);
+    // guests read, cannot write or manage
+    let s: ChoreographySummary = t.create(&owner, None, sample()).await.json();
+    assert!(!t.get(&format!("/api/choreographies/{}", s.id), &guest).await.json::<ChoreographyDoc>().can_write);
+    assert!(t.get(&format!("/api/choreographies/{}", s.id), &owner).await.json::<ChoreographyDoc>().can_write);
+    assert_eq!(t.create(&guest, Some(team.id), sample()).await.status, StatusCode::FORBIDDEN);
+    let body = AddTeamMember { nickname: "carl".into(), role: TeamRole::Guest };
+    assert_eq!(t.call(Method::POST, &members, Some(&guest), Some(body)).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.get(&members, &guest).await.json::<Vec<TeamMember>>().len(), 2);
+    // outsiders see nothing
+    assert_eq!(t.get(&members, &carl).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.get(&format!("/api/choreographies/{}", s.id), &carl).await.status, StatusCode::NOT_FOUND);
+
+    // promote to co-owner: can write now
+    let r = t
+        .call(Method::PATCH, &format!("{members}/{}", gm.account_id), Some(&owner), Some(UpdateTeamMember { role: TeamRole::CoOwner }))
+        .await;
+    assert_eq!(r.json::<TeamMember>().role, TeamRole::CoOwner);
+    assert_eq!(t.create(&guest, Some(team.id), sample()).await.status, StatusCode::OK);
+    // still not a manager
+    assert_eq!(t.get(&format!("/api/teams/{}/invites", team.id), &guest).await.status, StatusCode::FORBIDDEN);
+
+    // a share link: carl joins as guest (logging in first when needed)
+    let inv: Invite = t
+        .call(Method::POST, &format!("/api/teams/{}/invites", team.id), Some(&owner), Some(CreateInvite { role: TeamRole::Guest }))
+        .await
+        .json();
+    let link = format!("/join/{}", inv.token);
+    let r = t.send(Request::get(&link).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.location(), format!("/login?next=%2Fjoin%2F{}", inv.token));
+    let r = t.send(Request::get(r.location()).body(Body::empty()).unwrap()).await;
+    assert!(r.text().contains(&format!(r#"value="/join/{}""#, inv.token)));
+    let r = t.send(Request::get(&link).header(header::COOKIE, format!("arus_session={carl}")).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.location(), format!("/#team={}", team.id));
+    let me = t.me(&carl).await;
+    assert_eq!((me.teams.len(), me.teams[0].role), (1, TeamRole::Guest));
+    // the link does not demote
+    let r = t.send(Request::get(&link).header(header::COOKIE, format!("arus_session={guest}")).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(t.me(&guest).await.teams[0].role, TeamRole::CoOwner);
+    // signing up from a link lands back on it
+    let r = t.signup_resp("dora", "dora@example.com", "password-d", "password-d", &link).await;
+    assert_eq!(r.location(), link);
+    // only invite links are followed after login
+    let r = t.signup_resp("eve", "eve@example.com", "password-e", "password-e", "https://evil.example").await;
+    assert_eq!(r.location(), "/");
+    // revoked links stop working
+    let r = t.call(Method::DELETE, &format!("/api/invites/{}", inv.token), Some(&owner), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let dora = t.login("dora", "password-d").await;
+    let r = t.send(Request::get(&link).header(header::COOKIE, format!("arus_session={dora}")).body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // leaving, and removing; the owner can do neither to themselves
+    let me = t.me(&carl).await;
+    let r = t.call(Method::DELETE, &format!("{members}/{}", me.account_id.unwrap()), Some(&carl), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert!(t.me(&carl).await.teams.is_empty());
+    let r = t.call(Method::DELETE, &format!("{members}/{}", gm.account_id), Some(&owner), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let owner_id = t.me(&owner).await.account_id.unwrap();
+    let r = t.call(Method::DELETE, &format!("{members}/{owner_id}"), Some(&owner), None::<()>).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // the owner deletes the team
+    let r = t.call(Method::DELETE, &format!("/api/teams/{}", team.id), Some(&owner), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert!(t.me(&owner).await.teams.is_empty());
 }
 
 #[tokio::test]
@@ -416,11 +644,12 @@ async fn permissions() {
     let writer = t.login("writer", &writer.password).await;
     let other = t.login("other", &other.password).await;
 
-    // reader cannot create, writer can (team implicit, team_id ignored)
+    // reader cannot create, writer can (their only team is implicit), not in another team
     let r = t.create(&reader, None, sample()).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     r.error();
-    let r = t.create(&writer, Some(b.id), sample()).await;
+    assert_eq!(t.create(&writer, Some(b.id), sample()).await.status, StatusCode::NOT_FOUND);
+    let r = t.create(&writer, None, sample()).await;
     assert_eq!(r.status, StatusCode::OK);
     let s: ChoreographySummary = r.json();
     assert_eq!(s.team_id, a.id);
@@ -763,16 +992,15 @@ async fn team_delete_cascades() {
 
     let r = t.call(Method::DELETE, &format!("/api/teams/{}", a.id), Some(&admin), None::<()>).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
-    assert_eq!(t.get("/api/me", &m_session).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(t.login_resp("m", &m.password).await.location(), "/login?error=1");
+    // the account stays, without the team
+    assert!(t.me(&m_session).await.teams.is_empty());
     assert_eq!(t.get(&format!("/api/choreographies/{}", s.id), &admin).await.status, StatusCode::NOT_FOUND);
     assert_eq!(t.music_files(), 0);
     let st = t.storage(&admin).await;
     assert_eq!(st.used, kept.size_bytes);
     assert_eq!(st.teams.len(), 1);
     assert_eq!(t.get(&format!("/api/teams/{}/members", a.id), &admin).await.status, StatusCode::NOT_FOUND);
-    // the username is free again
-    t.member(&admin, b.id, "m", false).await;
+    let _ = m.id;
 }
 
 #[tokio::test]

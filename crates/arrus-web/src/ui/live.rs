@@ -434,6 +434,7 @@ fn resync(app: &mut App, id: ChoreographyId) {
             match r {
                 Ok(doc) => {
                     ed.collect();
+                    ed.may_write = doc.can_write;
                     let mut v = value_of(&doc.data);
                     let image = patch::take_image(&mut v);
                     let live = &mut ed.live;

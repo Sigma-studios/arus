@@ -12,15 +12,26 @@ embeds it.
 
 ## Accounts
 
-* One **admin** (`admin`, password from `ARUS_ADMIN_PASSWORD`) manages teams and
-  members and can do everything else too.
-* **Team members** get a login with a generated password (`tiger-maple-42`) that
-  only the admin can see, change or regenerate. A person belongs to one team.
-* Every member reads all of their team's choreographies; members with **write**
-  access can create, edit, import, delete and upload music for all of them.
-* Two people editing the same choreography: the second to save is offered to save
-  their version as a new choreography.
+* Anyone can **sign up** at `/signup` with a nickname (unique), an email and a
+  password, and logs in with either the nickname or the email.
+* A **free** account can create 1 team, holding up to 2 choreographies.
+  **Premium** accounts have no limits. Teams made by the admin have none either.
+* A team's **owner** adds people by nickname or with a **share link**
+  (`/join/…`), as **co-owner** (edits the choreographies too) or **guest**
+  (views them). An account can be in several teams and switches between them.
+* The **admin** (`admin`, password from `ARUS_ADMIN_PASSWORD`) sees every team
+  and every account (Accounts screen): search, premium and admin rights, emails,
+  passwords. Accounts given admin rights can do the same.
+* Passwords people choose are stored hashed (argon2): nobody can read them.
+  Passwords the server generates (`tiger-maple-42`) or the admin sets stay
+  visible to the admin until the person changes theirs.
+* Two people editing the same choreography: changes merge live; a whole-document
+  save that conflicts is offered as a new choreography.
 * Phones and tablets are view-only.
+
+The accounts replaced the earlier per-team members: on first start the server
+turns every member into an account (same nickname, password and sessions) in
+their team, as co-owner if they could write and guest otherwise.
 
 ## Storage
 

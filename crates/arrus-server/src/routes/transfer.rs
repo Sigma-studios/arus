@@ -49,6 +49,7 @@ pub async fn import(
             if !db::team_exists(conn, team_id)? {
                 return Err(Error::not_found());
             }
+            db::ensure_choreography_room(conn, team_id, choreographies.len() as u32)?;
             let stored = choreographies.iter().map(Stored::new).collect::<Result<Vec<_>>>()?;
             let total: u64 = stored.iter().map(Stored::size).sum();
             storage::ensure_fits(s, conn, 0, total)?;

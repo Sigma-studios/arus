@@ -92,18 +92,31 @@ pub fn hash_choreography() -> Option<i64> {
     h.strip_prefix("#c=")?.parse().ok()
 }
 
-/// Whether the URL fragment is `#admin` (the Teams & members screen).
-pub fn hash_is_admin() -> bool {
-    window().location().hash().is_ok_and(|h| h == "#admin")
+/// The screen named in the URL fragment (`#admin`, `#accounts`, `#team`), if any.
+pub fn hash_screen() -> Option<String> {
+    let h = window().location().hash().ok()?;
+    let name = h.strip_prefix('#')?;
+    (!name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase())).then(|| name.to_owned())
 }
 
-/// Reflect the Teams & members screen in the URL fragment.
-pub fn set_hash_admin(on: bool) {
-    if on {
-        set_hash("#admin".into());
-    } else if hash_is_admin() {
-        set_hash(String::new());
+/// The team named in the URL fragment (`#team=7`, after an invite link).
+pub fn hash_team() -> Option<i64> {
+    let h = window().location().hash().ok()?;
+    h.strip_prefix("#team=")?.parse().ok()
+}
+
+/// Reflect a screen in the URL fragment (`None`: the library).
+pub fn set_hash_screen(name: Option<&str>) {
+    match name {
+        Some(n) => set_hash(format!("#{n}")),
+        None if hash_screen().is_some() || hash_team().is_some() => set_hash(String::new()),
+        None => {}
     }
+}
+
+/// The page's origin (`https://host`), for share links.
+pub fn origin() -> String {
+    window().location().origin().unwrap_or_default()
 }
 
 /// Reflect the open choreography in the URL fragment (so reload / links work).

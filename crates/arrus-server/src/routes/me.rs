@@ -1,14 +1,10 @@
-use arrus_api::{Me, Storage, TeamUsage};
+use arrus_api::{Storage, TeamUsage};
 use axum::Json;
 use axum::extract::State;
 
 use crate::auth::Auth;
 use crate::error::Result;
 use crate::{AppState, storage};
-
-pub async fn me(auth: Auth) -> Json<Me> {
-    Json(auth.user.me())
-}
 
 pub async fn storage(State(state): State<AppState>, auth: Auth) -> Result<Json<Storage>> {
     let is_admin = auth.user.is_admin();
