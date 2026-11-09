@@ -23,9 +23,9 @@ const LABEL_ROOM: f64 = 18.0;
 pub fn render(c: &Choreography) -> Vec<u8> {
     let n = c.formations.len();
     let pages: Vec<Vec<u8>> = if n == 0 {
-        let mut p = Canvas::default();
-        p.text(Font::Bold, 22.0, MARGIN, PAGE_H - MARGIN - 18.0, &c.name, Align::Left, GRAY_DARK);
-        p.text(Font::Regular, 11.0, MARGIN, PAGE_H - MARGIN - 40.0, "No formations yet.", Align::Left, GRAY_TEXT);
+        let mut p = Canvas::page();
+        p.text(Font::Bold, 22.0, MARGIN, PAGE_H - MARGIN - 18.0, &c.name, Align::Left, TEXT);
+        p.text(Font::Regular, 11.0, MARGIN, PAGE_H - MARGIN - 40.0, "No formations yet.", Align::Left, TEXT_WEAK);
         vec![p.buf]
     } else {
         (0..n).map(|f| page(c, f)).collect()
@@ -36,10 +36,19 @@ pub fn render(c: &Choreography) -> Vec<u8> {
 // ---- one page --------------------------------------------------------------
 
 type Rgb = (f64, f64, f64);
-const GRAY_DARK: Rgb = (0.12, 0.13, 0.16);
-const GRAY_TEXT: Rgb = (0.38, 0.40, 0.45);
-const GRAY_FAINT: Rgb = (0.58, 0.60, 0.64);
-const WHITE: Rgb = (1.0, 1.0, 1.0);
+// A dark page, easy on the eyes on screen (matches the app's theme).
+const PAGE_BG: Rgb = (0.075, 0.075, 0.085);
+const TEXT: Rgb = (0.92, 0.92, 0.94);
+const TEXT_WEAK: Rgb = (0.66, 0.66, 0.70);
+const TEXT_FAINT: Rgb = (0.48, 0.48, 0.53);
+/// Near-black: text on light dancers, and their outlines.
+const INK: Rgb = (0.07, 0.07, 0.08);
+const ACCENT: Rgb = (0.66, 0.50, 0.98);
+const BACKSTAGE: Rgb = (0.115, 0.115, 0.13);
+const STAGE_FLOOR: Rgb = (0.165, 0.165, 0.185);
+const GRID_LINE: Rgb = (0.26, 0.26, 0.29);
+const BACKSTAGE_EDGE: Rgb = (0.34, 0.34, 0.38);
+const STAGE_EDGE: Rgb = (0.64, 0.64, 0.69);
 
 fn rgb_of(argb: i64) -> Rgb {
     let a = Argb::from_i64(argb);
@@ -48,7 +57,7 @@ fn rgb_of(argb: i64) -> Rgb {
 
 /// Black or white, whichever reads better on `c`.
 fn on_color(c: Rgb) -> Rgb {
-    if 0.299 * c.0 + 0.587 * c.1 + 0.114 * c.2 > 0.6 { GRAY_DARK } else { WHITE }
+    if 0.299 * c.0 + 0.587 * c.1 + 0.114 * c.2 > 0.6 { INK } else { (1.0, 1.0, 1.0) }
 }
 
 fn mix(c: Rgb, with: Rgb, t: f64) -> Rgb {
@@ -113,23 +122,23 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
     let fm = &c.formations[f];
     let n = c.formations.len();
     let set = &c.settings;
-    let mut p = Canvas::default();
+    let mut p = Canvas::page();
 
     // Header: the formation's name, then where it sits in the show.
     let top = PAGE_H - MARGIN;
     let title = formation_title(fm, f);
     let right_text = fit_text(&c.name, Font::Regular, 10.0, 260.0);
     let title_w = PAGE_W - 2.0 * MARGIN - text_width(&right_text, Font::Regular, 10.0) - 24.0;
-    p.text(Font::Bold, 22.0, MARGIN, top - 18.0, &fit_text(&title, Font::Bold, 22.0, title_w), Align::Left, GRAY_DARK);
-    p.text(Font::Regular, 10.0, PAGE_W - MARGIN, top - 14.0, &right_text, Align::Right, GRAY_TEXT);
+    p.text(Font::Bold, 22.0, MARGIN, top - 18.0, &fit_text(&title, Font::Bold, 22.0, title_w), Align::Left, TEXT);
+    p.text(Font::Regular, 10.0, PAGE_W - MARGIN, top - 14.0, &right_text, Align::Right, TEXT_WEAK);
     let mut sub = format!("Formation {} of {n} \u{b7} starts at {}", f + 1, fmt_clock(timeline::formation_time(c, f)));
     sub.push_str(&format!(" \u{b7} hold {}", fmt_secs(fm.duration)));
     if f > 0 {
         sub.push_str(&format!(" \u{b7} transition {}", fmt_secs(fm.transition_duration)));
     }
-    p.text(Font::Regular, 10.5, MARGIN, top - 36.0, &sub, Align::Left, GRAY_TEXT);
-    p.stroke_color(mix(GRAY_FAINT, WHITE, 0.5));
-    p.line_width(0.6);
+    p.text(Font::Regular, 10.5, MARGIN, top - 36.0, &sub, Align::Left, TEXT_WEAK);
+    p.stroke_color(mix(ACCENT, PAGE_BG, 0.45));
+    p.line_width(0.8);
     p.line(MARGIN, top - 46.0, PAGE_W - MARGIN, top - 46.0);
 
     // Comments at the bottom (a few lines at most).
@@ -151,11 +160,11 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
     for (k, l) in lines.iter().enumerate() {
         let y = footer + 16.0 + 14.0 * (lines.len() - 1 - k) as f64;
         if k == 0 {
-            p.text(Font::Bold, 10.0, MARGIN, y, "Notes", Align::Left, GRAY_TEXT);
+            p.text(Font::Bold, 10.0, MARGIN, y, "Notes", Align::Left, ACCENT);
         }
-        p.text(Font::Regular, 10.0, MARGIN + 70.0, y, l, Align::Left, GRAY_DARK);
+        p.text(Font::Regular, 10.0, MARGIN + 70.0, y, l, Align::Left, TEXT);
     }
-    p.text(Font::Regular, 8.0, PAGE_W - MARGIN, footer, &format!("Page {} of {n}", f + 1), Align::Right, GRAY_FAINT);
+    p.text(Font::Regular, 8.0, PAGE_W - MARGIN, footer, &format!("Page {} of {n}", f + 1), Align::Right, TEXT_FAINT);
 
     // The stage.
     let grid = layout::grid_area(c);
@@ -182,13 +191,13 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
     let (gx, gy, gw, gh) = fr.rect(grid);
     let (sx, sy, sw, sh) = fr.rect(stage);
     if backstage {
-        p.fill_color((0.90, 0.91, 0.93));
+        p.fill_color(BACKSTAGE);
         p.rect(gx, gy, gw, gh, Paint::Fill);
     }
-    p.fill_color(WHITE);
+    p.fill_color(STAGE_FLOOR);
     p.rect(sx, sy, sw, sh, Paint::Fill);
     if set.is_grid_shown {
-        p.stroke_color((0.84, 0.85, 0.88));
+        p.stroke_color(GRID_LINE);
         p.line_width(0.4);
         let mut x = grid.x0 + 1.0;
         while x < grid.x1 - 1e-6 {
@@ -206,17 +215,17 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
     // Centre line.
     let mid = (stage.x0 + stage.x1) / 2.0;
     let (a, b2) = (fr.map(mid, stage.y0), fr.map(mid, stage.y1));
-    p.stroke_color(GRAY_FAINT);
+    p.stroke_color(TEXT_FAINT);
     p.line_width(0.8);
     p.dash(4.0, 3.0);
     p.line(a.0, a.1, b2.0, b2.1);
     p.undash();
     if backstage {
-        p.stroke_color((0.70, 0.72, 0.76));
+        p.stroke_color(BACKSTAGE_EDGE);
         p.line_width(0.6);
         p.rect(gx, gy, gw, gh, Paint::Stroke);
     }
-    p.stroke_color((0.30, 0.32, 0.36));
+    p.stroke_color(STAGE_EDGE);
     p.line_width(1.2);
     p.rect(sx, sy, sw, sh, Paint::Stroke);
 
@@ -233,13 +242,13 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
         };
         let aud = place(gmid, outer.y1, 11.0);
         let back = place(gmid, outer.y0, 11.0);
-        p.text(Font::Bold, 9.0, aud.0, aud.1 - 3.0, "AUDIENCE", Align::Center, GRAY_TEXT);
-        p.text(Font::Regular, 9.0, back.0, back.1 - 3.0, "BACKSTAGE", Align::Center, GRAY_FAINT);
+        p.text(Font::Bold, 9.0, aud.0, aud.1 - 3.0, "AUDIENCE", Align::Center, TEXT_WEAK);
+        p.text(Font::Regular, 9.0, back.0, back.1 - 3.0, "BACKSTAGE", Align::Center, TEXT_FAINT);
         for (x, label) in [(outer.x1, "STAGE RIGHT"), (outer.x0, "STAGE LEFT")] {
             let at = place(x, ymid, 10.0);
             // Reads bottom-to-top on the left of the page, top-to-bottom on the right.
             let angle = if at.0 < center.0 { 90.0 } else { -90.0 };
-            p.text_rotated(Font::Regular, 9.0, at.0, at.1, angle, label, GRAY_FAINT);
+            p.text_rotated(Font::Regular, 9.0, at.0, at.1, angle, label, TEXT_FAINT);
         }
     }
 
@@ -262,8 +271,8 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
             .map(|&(x, y)| fr.map(prop.position.x + x * cs - y * sn, prop.position.y + x * sn + y * cs))
             .collect();
         let col = rgb_of(prop.color);
-        p.fill_color(mix(col, WHITE, 1.0 - prop.alpha.clamp(0.1, 1.0) * 0.8));
-        p.stroke_color(mix(col, GRAY_DARK, 0.3));
+        p.fill_color(mix(col, STAGE_FLOOR, 1.0 - prop.alpha.clamp(0.1, 1.0) * 0.8));
+        p.stroke_color(mix(col, TEXT, 0.25));
         p.line_width(0.6);
         p.polygon(&pts, Paint::FillStroke);
     }
@@ -276,7 +285,7 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
         let (cx, cy) = fr.map(u.position.x, u.position.y);
         let col = rgb_of(u.color);
         p.fill_color(col);
-        p.stroke_color(mix(col, GRAY_DARK, 0.55));
+        p.stroke_color(mix(col, INK, 0.5));
         p.line_width(0.6);
         match layout::shape_outline(u.shape()) {
             None => p.circle(cx, cy, rp, Paint::FillStroke),
@@ -304,7 +313,7 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
             }
             let (cx, cy) = fr.map(u.position.x, u.position.y);
             let size = (rp * 0.62).clamp(5.0, 11.0) * label_mult;
-            p.text(Font::Regular, size, cx, cy - rp - size * 0.95, name, Align::Center, GRAY_DARK);
+            p.text(Font::Regular, size, cx, cy - rp - size * 0.95, name, Align::Center, TEXT);
         }
     }
     p.buf
@@ -355,6 +364,13 @@ fn n(v: f64) -> String {
 }
 
 impl Canvas {
+    /// A new page, already painted with the dark background.
+    fn page() -> Self {
+        let mut p = Self::default();
+        p.fill_color(PAGE_BG);
+        p.rect(0.0, 0.0, PAGE_W, PAGE_H, Paint::Fill);
+        p
+    }
     fn op(&mut self, s: &str) {
         self.buf.extend_from_slice(s.as_bytes());
         self.buf.push(b'\n');

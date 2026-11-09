@@ -2,20 +2,21 @@
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Stroke, TextStyle, Theme, Vec2};
 
-pub const BG: Color32 = Color32::from_rgb(0x0E, 0x10, 0x15);
-pub const PANEL: Color32 = Color32::from_rgb(0x15, 0x18, 0x20);
-pub const SURFACE: Color32 = Color32::from_rgb(0x1C, 0x20, 0x2A);
-pub const RAISED: Color32 = Color32::from_rgb(0x25, 0x2A, 0x37);
-pub const HOVER: Color32 = Color32::from_rgb(0x2E, 0x34, 0x44);
-pub const BORDER: Color32 = Color32::from_rgb(0x2C, 0x32, 0x40);
-pub const TEXT: Color32 = Color32::from_rgb(0xE6, 0xE8, 0xEE);
-pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x95, 0x9E, 0xB0);
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x64, 0x6C, 0x7E);
+pub const BG: Color32 = Color32::from_rgb(0x0B, 0x0B, 0x0C);
+pub const PANEL: Color32 = Color32::from_rgb(0x13, 0x13, 0x15);
+pub const SURFACE: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1D);
+pub const RAISED: Color32 = Color32::from_rgb(0x24, 0x24, 0x28);
+pub const HOVER: Color32 = Color32::from_rgb(0x2E, 0x2E, 0x33);
+pub const BORDER: Color32 = Color32::from_rgb(0x2C, 0x2C, 0x31);
+pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xEB);
+pub const TEXT_WEAK: Color32 = Color32::from_rgb(0xA0, 0xA0, 0xA8);
+pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x70, 0x70, 0x78);
 
-/// Brand accent (the app's default dancer pink, slightly lifted).
-pub const ACCENT: Color32 = Color32::from_rgb(0xF0, 0x3E, 0x74);
-pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x5A, 0x1F, 0x33);
-/// Selection on the stage: a cool colour that never matches a dancer pink.
+/// Brand accent: a violet bright enough for text on the panels and dark
+/// enough for white text on a primary button.
+pub const ACCENT: Color32 = Color32::from_rgb(0x92, 0x66, 0xF8);
+pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x3A, 0x2B, 0x63);
+/// Selection on the stage: a cool colour that stands apart from the accent.
 pub const SELECT: Color32 = Color32::from_rgb(0x5C, 0xC8, 0xFF);
 
 pub const OK: Color32 = Color32::from_rgb(0x2E, 0xC2, 0x7E);
@@ -23,17 +24,17 @@ pub const WARN: Color32 = Color32::from_rgb(0xF5, 0xA5, 0x24);
 pub const ERROR: Color32 = Color32::from_rgb(0xF0, 0x52, 0x52);
 
 // Stage
-pub const STAGE_FLOOR: Color32 = Color32::from_rgb(0x22, 0x26, 0x31);
-pub const BACKSTAGE: Color32 = Color32::from_rgb(0x17, 0x1A, 0x22);
-pub const GRID: Color32 = Color32::from_rgb(0x3A, 0x41, 0x52);
-pub const GRID_SUB: Color32 = Color32::from_rgb(0x2A, 0x2F, 0x3C);
-pub const GRID_CENTER: Color32 = Color32::from_rgb(0x55, 0x5E, 0x74);
-pub const STAGE_EDGE: Color32 = Color32::from_rgb(0x6A, 0x73, 0x88);
+pub const STAGE_FLOOR: Color32 = Color32::from_rgb(0x20, 0x20, 0x23);
+pub const BACKSTAGE: Color32 = Color32::from_rgb(0x16, 0x16, 0x18);
+pub const GRID: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x40);
+pub const GRID_SUB: Color32 = Color32::from_rgb(0x2A, 0x2A, 0x2F);
+pub const GRID_CENTER: Color32 = Color32::from_rgb(0x58, 0x58, 0x61);
+pub const STAGE_EDGE: Color32 = Color32::from_rgb(0x74, 0x74, 0x7E);
 
 // Timeline
-pub const HOLD: Color32 = Color32::from_rgb(0x2B, 0x31, 0x40);
-pub const HOLD_CURRENT: Color32 = Color32::from_rgb(0x4A, 0x27, 0x36);
-pub const TRANSITION: Color32 = Color32::from_rgb(0x1A, 0x1E, 0x27);
+pub const HOLD: Color32 = Color32::from_rgb(0x2B, 0x2B, 0x30);
+pub const HOLD_CURRENT: Color32 = Color32::from_rgb(0x3A, 0x2C, 0x5E);
+pub const TRANSITION: Color32 = Color32::from_rgb(0x19, 0x19, 0x1C);
 
 /// Install the theme. `touch` enlarges hit targets and text for phones.
 pub fn apply(ctx: &egui::Context, touch: bool) {
@@ -93,7 +94,7 @@ pub fn apply(ctx: &egui::Context, touch: bool) {
 
         w.hovered.bg_fill = HOVER;
         w.hovered.weak_bg_fill = HOVER;
-        w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x46, 0x4E, 0x62));
+        w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x48, 0x48, 0x50));
         w.hovered.fg_stroke = Stroke::new(1.5, Color32::WHITE);
         w.hovered.corner_radius = r;
         w.hovered.expansion = 0.0;
@@ -127,7 +128,7 @@ pub fn argb(v: i64, opacity: f32) -> Color32 {
 /// Black or white, whichever reads better on `c`.
 pub fn on_color(c: Color32) -> Color32 {
     let l = 0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32;
-    if l > 150.0 { Color32::from_rgb(0x12, 0x14, 0x18) } else { Color32::WHITE }
+    if l > 150.0 { Color32::from_rgb(0x12, 0x12, 0x14) } else { Color32::WHITE }
 }
 
 /// A stable colour per person (presence initials).

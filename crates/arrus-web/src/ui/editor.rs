@@ -1079,18 +1079,22 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
             widgets::section(ui, "Comments");
             let mut remove = None;
             for (k, c) in f.comments.iter().enumerate() {
-                ui.horizontal(|ui| {
+                // Right-to-left: the button first, then the box takes exactly
+                // what is left. A fixed "width - 30" overflowed by a few
+                // pixels, and the panel grew to fit it every frame, so it
+                // could no longer be resized.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if ui.small_button("✕").on_hover_text("Delete comment").clicked() {
+                        remove = Some(k);
+                    }
                     let mut text = c.text.clone();
-                    let w = ui.available_width() - 30.0;
-                    if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(w)).changed() {
+                    let w = ui.available_width();
+                    if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(w).align(egui::Align2::LEFT_TOP)).changed() {
                         ed.edit(Some(&format!("fcom{cur}-{k}")), |d| {
                             if let Some(c) = d.formations[cur].comments.get_mut(k) {
                                 c.text = text;
                             }
                         });
-                    }
-                    if ui.small_button("✕").on_hover_text("Delete comment").clicked() {
-                        remove = Some(k);
                     }
                 });
             }
