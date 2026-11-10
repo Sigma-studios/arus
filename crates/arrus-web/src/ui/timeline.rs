@@ -23,7 +23,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
     let mut action = None;
     let compact = ed.compact;
     egui::Panel::bottom("timeline")
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(14, 10)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(14, 10)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let size = if compact { vec2(46.0, 40.0) } else { vec2(36.0, 30.0) };
@@ -31,7 +31,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
                     ed.prev_formation();
                 }
                 let icon = if ed.playing { Icon::Pause } else { Icon::Play };
-                if transport_button(ui, size + vec2(8.0, 0.0), icon, Some(theme::ACCENT))
+                if transport_button(ui, size + vec2(8.0, 0.0), icon, Some(theme::accent()))
                     .on_hover_text("Play / pause (Space)")
                     .clicked()
                 {
@@ -102,7 +102,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
 fn show_compact(ed: &mut Editor, ui: &mut Ui) {
     if ed.show_formations || ed.show_inspector {
         egui::Panel::bottom("timeline")
-            .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(10, 5)))
+            .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(10, 5)))
             .show(ui, |ui| {
                 ui.spacing_mut().interact_size.y = 30.0;
                 ui.spacing_mut().button_padding = vec2(6.0, 4.0);
@@ -116,7 +116,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
                             ed.next_formation();
                         }
                         // Playback started before opening the sheet can still be stopped.
-                        if ed.playing && transport_button(ui, size, Icon::Pause, Some(theme::ACCENT)).clicked() {
+                        if ed.playing && transport_button(ui, size, Icon::Pause, Some(theme::accent())).clicked() {
                             ed.toggle_play();
                         }
                         ui.centered_and_justified(|ui| {
@@ -128,7 +128,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
         return;
     }
     egui::Panel::bottom("timeline")
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(10, 6)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(10, 6)))
         .show(ui, |ui| {
             ui.spacing_mut().interact_size.y = 30.0;
             ui.spacing_mut().button_padding = vec2(6.0, 4.0);
@@ -139,7 +139,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
                     ed.prev_formation();
                 }
                 let icon = if ed.playing { Icon::Pause } else { Icon::Play };
-                if transport_button(ui, size, icon, Some(theme::ACCENT)).clicked() {
+                if transport_button(ui, size, icon, Some(theme::accent())).clicked() {
                     ed.toggle_play();
                 }
                 if transport_button(ui, size, Icon::Next, None).clicked() {
@@ -183,7 +183,11 @@ fn transport_button(ui: &mut Ui, size: egui::Vec2, icon: Icon, fill: Option<Colo
     let r = ui.add(b);
     let c = r.rect.center();
     let s = r.rect.height().min(r.rect.width()) * 0.2;
-    let col = if fill.is_some() || r.hovered() { Color32::WHITE } else { theme::TEXT };
+    let col = match fill {
+        Some(f) => theme::on_color(f),
+        None if r.hovered() => Color32::WHITE,
+        None => theme::TEXT,
+    };
     let p = ui.painter();
     let tri = |pts: Vec<egui::Pos2>| egui::Shape::convex_polygon(pts, col, Stroke::NONE);
     match icon {
@@ -219,7 +223,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click_and_drag());
     let len = ed.timeline_len();
     let p = ui.painter_at(rect.expand(8.0));
-    p.rect_filled(rect, 6.0, theme::BG);
+    p.rect_filled(rect, 6.0, theme::bg());
     let spans = timeline::spans(&ed.doc);
     let cur = ed.cur();
     let inner = rect.shrink2(vec2(0.0, 4.0));
@@ -231,7 +235,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
         let x2 = time_to_x(s.end, len, rect);
         if x1 > x0 + 0.5 {
             let tr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
-            p.rect_filled(tr, 3.0, theme::TRANSITION);
+            p.rect_filled(tr, 3.0, theme::transition());
             // Diagonal hatching marks a transition.
             let clip = p.with_clip_rect(tr);
             let mut x = tr.left() - tr.height();
@@ -246,22 +250,22 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
         if x2 > x1 + 0.5 {
             let hr = Rect::from_min_max(pos2(x1 + 1.0, inner.top()), pos2(x2 - 1.0, inner.bottom()));
             let selected = s.formation == cur;
-            p.rect_filled(hr, 4.0, if selected { theme::HOLD_CURRENT } else { theme::HOLD });
+            p.rect_filled(hr, 4.0, if selected { theme::hold_current() } else { theme::hold() });
             if selected {
-                p.rect_stroke(hr, 4.0, Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
+                p.rect_stroke(hr, 4.0, Stroke::new(1.0, theme::accent()), egui::StrokeKind::Inside);
             }
             // Where the others are.
             for (k, (_, color)) in others.iter().filter(|o| o.0 == s.formation).enumerate() {
                 let c = pos2((hr.right() - 6.0 - 9.0 * k as f32).max(hr.left() + 4.0), hr.top() + 6.0);
                 p.circle_filled(c, 4.0, *color);
-                p.circle_stroke(c, 4.0, Stroke::new(1.0, theme::BG));
+                p.circle_stroke(c, 4.0, Stroke::new(1.0, theme::bg()));
             }
             let f = &ed.doc.formations[s.formation];
             let stripe = Rect::from_min_max(pos2(hr.left() + 2.0, hr.bottom() - 3.0), pos2(hr.right() - 2.0, hr.bottom() - 1.0));
             // Formations imported with a colour get a stripe in the accent
             // (the stored colour is the old app's pink).
             if f.color.is_some() {
-                p.rect_filled(stripe, 1.0, theme::ACCENT.gamma_multiply(0.8));
+                p.rect_filled(stripe, 1.0, theme::accent().gamma_multiply(0.8));
             }
             if hr.width() > 18.0 {
                 let mut text = (s.formation + 1).to_string();
@@ -282,7 +286,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
             // A 0 s hold: a thin mark, so it can be seen (and picked in the list).
             let selected = s.formation == cur;
             let mr = Rect::from_center_size(pos2(x1, inner.center().y), vec2(3.0, inner.height()));
-            p.rect_filled(mr, 1.5, if selected { theme::ACCENT } else { theme::HOLD });
+            p.rect_filled(mr, 1.5, if selected { theme::accent() } else { theme::hold() });
         }
     }
     // Music beyond the last formation.
@@ -310,10 +314,10 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
 
     // Playhead.
     let x = time_to_x(ed.t, len, rect);
-    p.line_segment([pos2(x, rect.top() - 3.0), pos2(x, rect.bottom() + 3.0)], Stroke::new(2.0, theme::ACCENT));
+    p.line_segment([pos2(x, rect.top() - 3.0), pos2(x, rect.bottom() + 3.0)], Stroke::new(2.0, theme::accent()));
     p.add(egui::Shape::convex_polygon(
         vec![pos2(x - 6.0, rect.top() - 6.0), pos2(x + 6.0, rect.top() - 6.0), pos2(x, rect.top() + 2.0)],
-        theme::ACCENT,
+        theme::accent(),
         Stroke::NONE,
     ));
 }

@@ -200,7 +200,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     );
 
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Choreographies");
@@ -291,7 +291,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(&c.name).strong().size(16.0));
                                 if c.music.is_some() {
-                                    ui.label(RichText::new("♪").color(theme::ACCENT));
+                                    ui.label(RichText::new("♪").color(theme::accent()));
                                 }
                             });
                             ui.label(
@@ -342,7 +342,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             .on_hover_text(web::local_datetime(c.updated_at));
                         match &c.music {
                             Some(m) => {
-                                ui.label(RichText::new("♪").color(theme::ACCENT).size(16.0))
+                                ui.label(RichText::new("♪").color(theme::accent()).size(16.0))
                                     .on_hover_text(format!("{} ({})", m.filename, util::fmt_bytes(m.bytes)));
                             }
                             None => {

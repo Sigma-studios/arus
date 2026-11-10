@@ -71,7 +71,7 @@ fn test_alerts(app: &mut App) {
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(28, 18)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(28, 18)))
         .show(ui, |ui| {
             ui.heading("All teams");
             ui.add_space(10.0);

@@ -92,13 +92,13 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     let backstage_on = geom::backstage_on(c);
     if backstage_on {
         let r = v.bounds_to_screen(drawable);
-        painter.rect_filled(r, 4.0, theme::BACKSTAGE);
+        painter.rect_filled(r, 4.0, theme::backstage());
         hatch(painter, r, 0.7);
-        painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+        painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::border()), StrokeKind::Inside);
     }
 
     // Floor.
-    painter.rect_filled(stage_rect, 2.0, theme::STAGE_FLOOR);
+    painter.rect_filled(stage_rect, 2.0, theme::stage_floor());
 
     // Background: on the stage only, never over the backstage.
     if let Some(bg) = &c.stage_background {
@@ -113,7 +113,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     }
 
     paint_grid(painter, c, v, drawable, stage);
-    painter.rect_stroke(stage_rect, 2.0, Stroke::new(1.5, theme::STAGE_EDGE), StrokeKind::Middle);
+    painter.rect_stroke(stage_rect, 2.0, Stroke::new(1.5, theme::stage_edge()), StrokeKind::Middle);
     paint_edge_labels(painter, c, v, stage, drawable);
 
     // Props.
@@ -132,10 +132,10 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
         if selected && s.handles && !s.playing {
             let (corners, knob, front) = prop_handles(p, v);
             painter.line_segment([front, knob], Stroke::new(1.5, theme::SELECT));
-            painter.circle(knob, HANDLE_HALF + 1.5, theme::BG, Stroke::new(2.0, theme::SELECT));
+            painter.circle(knob, HANDLE_HALF + 1.5, theme::bg(), Stroke::new(2.0, theme::SELECT));
             for c in corners {
                 let r = Rect::from_center_size(c, Vec2::splat(HANDLE_HALF * 2.0));
-                painter.rect_filled(r, 2.0, theme::BG);
+                painter.rect_filled(r, 2.0, theme::bg());
                 painter.rect_stroke(r, 2.0, Stroke::new(2.0, theme::SELECT), StrokeKind::Middle);
             }
         }
@@ -338,14 +338,14 @@ fn paint_grid(painter: &Painter, c: &Choreography, v: &View, grid: Bounds, stage
         let mut x = x0 + 0.5;
         while x < x1 {
             if (x - x0).fract() != 0.0 {
-                line(P::new(x, y0), P::new(x, y1), theme::GRID_SUB, 1.0);
+                line(P::new(x, y0), P::new(x, y1), theme::grid_sub(), 1.0);
             }
             x += 0.5;
         }
         let mut y = y0 + 0.5;
         while y < y1 {
             if (y - y0).fract() != 0.0 {
-                line(P::new(x0, y), P::new(x1, y), theme::GRID_SUB, 1.0);
+                line(P::new(x0, y), P::new(x1, y), theme::grid_sub(), 1.0);
             }
             y += 0.5;
         }
@@ -353,16 +353,16 @@ fn paint_grid(painter: &Painter, c: &Choreography, v: &View, grid: Bounds, stage
     if set.is_grid_shown {
         for i in 1..(grid.width().ceil() as i64) {
             let x = x0 + i as f64;
-            line(P::new(x, y0), P::new(x, y1), theme::GRID, 1.0);
+            line(P::new(x, y0), P::new(x, y1), theme::grid(), 1.0);
         }
         for i in 1..(grid.height().ceil() as i64) {
             let y = y0 + i as f64;
-            line(P::new(x0, y), P::new(x1, y), theme::GRID, 1.0);
+            line(P::new(x0, y), P::new(x1, y), theme::grid(), 1.0);
         }
     }
     // Centre line, always faintly visible: the reference for distance marks.
     let mid = stage.center().x;
-    line(P::new(mid, stage.min.y), P::new(mid, stage.max.y), theme::GRID_CENTER, 1.5);
+    line(P::new(mid, stage.min.y), P::new(mid, stage.max.y), theme::grid_center(), 1.5);
 }
 
 /// Text centred at `pos`, rotated by `angle` radians (clockwise).

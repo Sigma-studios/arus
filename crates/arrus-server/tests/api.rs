@@ -1341,3 +1341,57 @@ async fn pdf_export() {
     // Other teams cannot.
     assert_eq!(t.get(&format!("/api/choreographies/{}/pdf", s.id), &o).await.status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn nickname_changes_once_a_month() {
+    let t = T::new();
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let rename = |n: &str| UpdateMe { current_password: "correct horse".into(), nickname: Some(n.into()), ..Default::default() };
+
+    assert_eq!(t.me(&bob).await.nickname_change_from, None, "a new account may rename at once");
+    let me: Me = t.call(Method::PATCH, "/api/me", Some(&bob), Some(rename("robert"))).await.json();
+    assert_eq!(me.username, "robert");
+    let from = me.nickname_change_from.expect("next change is in a month");
+    assert!(from >= arrus_server::db::now() + NICKNAME_CHANGE_INTERVAL - 5);
+
+    // too soon, even only changing case
+    let r = t.call(Method::PATCH, "/api/me", Some(&bob), Some(rename("Robert"))).await;
+    assert_eq!((r.status, r.error().code.as_deref()), (StatusCode::TOO_MANY_REQUESTS, Some("nickname_too_soon")));
+    assert!(r.error().error.contains("30 days"), "{}", r.error().error);
+    // the same nickname with other changes is fine
+    let upd = UpdateMe { email: Some("rob@example.com".into()), ..rename("robert") };
+    assert_eq!(t.call(Method::PATCH, "/api/me", Some(&bob), Some(upd)).await.status, StatusCode::OK);
+
+    // a month later
+    let conn = rusqlite::Connection::open(t.dir.path().join("arus.db")).unwrap();
+    conn.execute("UPDATE accounts SET nickname_changed_at = nickname_changed_at - ?1", [NICKNAME_CHANGE_INTERVAL]).unwrap();
+    assert_eq!(t.me(&bob).await.nickname_change_from, None);
+    let me: Me = t.call(Method::PATCH, "/api/me", Some(&bob), Some(rename("Robert"))).await.json();
+    assert_eq!(me.username, "Robert");
+
+    // the admin can still rename anyone
+    let admin = t.login("admin", ADMIN_PW).await;
+    let upd = UpdateAccount { nickname: Some("rob".into()), ..Default::default() };
+    let r = t.call(Method::PATCH, &format!("/api/accounts/{}", me.account_id.unwrap()), Some(&admin), Some(upd)).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn prefs_are_saved_per_person() {
+    let t = T::new();
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let ann = t.signup("ann", "ann@example.com", "correct horse").await;
+    assert_eq!(t.me(&bob).await.prefs, UserPrefs::default());
+
+    let prefs = UserPrefs { background: Some([10, 20, 30]), accent: Some([200, 100, 50]), glide_secs: 9.0 };
+    let saved: UserPrefs = t.call(Method::PUT, "/api/me/prefs", Some(&bob), Some(prefs)).await.json();
+    assert_eq!(saved.glide_secs, MAX_GLIDE_SECS, "clamped");
+    assert_eq!(t.me(&bob).await.prefs, saved);
+    assert_eq!(t.me(&ann).await.prefs, UserPrefs::default(), "not shared");
+
+    // the master admin (no account row) has them too
+    let admin = t.login("admin", ADMIN_PW).await;
+    let prefs = UserPrefs { glide_secs: 0.0, ..Default::default() };
+    assert_eq!(t.call(Method::PUT, "/api/me/prefs", Some(&admin), Some(prefs.clone())).await.status, StatusCode::OK);
+    assert_eq!(t.me(&admin).await.prefs, prefs);
+}

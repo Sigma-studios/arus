@@ -2,8 +2,8 @@
 //! admin's list of every account.
 
 use arrus_api::{
-    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, FREE_TEAMS, MIN_PASSWORD_LEN, Me, MyTeam, Role,
-    TeamRole, UpdateAccount, UpdateMe,
+    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, FREE_TEAMS, MIN_PASSWORD_LEN, Me, MyTeam,
+    NICKNAME_CHANGE_INTERVAL, Role, TeamRole, UpdateAccount, UpdateMe, UserPrefs,
 };
 use axum::Json;
 use axum::extract::{Path, State};
@@ -154,9 +154,15 @@ fn load_me(conn: &Connection, user: &User) -> Result<Me> {
             premium: true,
             teams: Vec::new(),
             can_create_team: true,
+            nickname_change_from: None,
+            prefs: admin_prefs(conn)?,
         });
     };
-    let email: Option<String> = conn.query_row("SELECT email FROM accounts WHERE id = ?1", [a.id], |r| r.get(0))?;
+    let (email, changed_at, prefs): (Option<String>, Option<i64>, Option<String>) = conn.query_row(
+        "SELECT email, nickname_changed_at, prefs FROM accounts WHERE id = ?1",
+        [a.id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
     let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
     Ok(Me {
         username: a.nickname.clone(),
@@ -166,7 +172,50 @@ fn load_me(conn: &Connection, user: &User) -> Result<Me> {
         premium: a.is_premium,
         teams: my_teams(conn, a.id)?,
         can_create_team: a.is_admin || a.is_premium || (owned as u32) < FREE_TEAMS,
+        nickname_change_from: nickname_change_from(changed_at, db::now()),
+        prefs: parse_prefs(prefs.as_deref()),
     })
+}
+
+/// When the nickname may change again, if not yet.
+fn nickname_change_from(changed_at: Option<i64>, now: i64) -> Option<i64> {
+    changed_at.map(|t| t + NICKNAME_CHANGE_INTERVAL).filter(|&from| from > now)
+}
+
+fn parse_prefs(json: Option<&str>) -> UserPrefs {
+    json.and_then(|j| serde_json::from_str::<UserPrefs>(j).ok()).unwrap_or_default().cleaned()
+}
+
+/// The master admin has no account row: their settings live in `meta`.
+const ADMIN_PREFS_KEY: &str = "admin_prefs";
+
+fn admin_prefs(conn: &Connection) -> Result<UserPrefs> {
+    let json: Option<String> =
+        conn.query_row("SELECT value FROM meta WHERE key = ?1", [ADMIN_PREFS_KEY], |r| r.get(0)).optional()?;
+    Ok(parse_prefs(json.as_deref()))
+}
+
+/// Save the logged-in person's settings (no password needed).
+pub async fn update_prefs(
+    State(state): State<AppState>,
+    auth: Auth,
+    ApiJson(body): ApiJson<UserPrefs>,
+) -> Result<Json<UserPrefs>> {
+    let prefs = body.cleaned();
+    let json = serde_json::to_string(&prefs).map_err(|e| Error::bad_request(e.to_string()))?;
+    let id = auth.user.account_id();
+    state
+        .db(move |_, conn| {
+            match id {
+                Some(id) => conn.execute("UPDATE accounts SET prefs = ?1 WHERE id = ?2", params![json, id])?,
+                None => conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![ADMIN_PREFS_KEY, json],
+                )?,
+            };
+            Ok(Json(prefs))
+        })
+        .await
 }
 
 pub async fn me(State(state): State<AppState>, auth: Auth) -> Result<Json<Me>> {
@@ -195,8 +244,30 @@ pub async fn update_me(State(state): State<AppState>, auth: Auth, ApiJson(body):
             }
             let tx = conn.transaction()?;
             if let Some(n) = &nickname {
-                nickname_free(&tx, n, Some(id))?;
-                tx.execute("UPDATE accounts SET nickname = ?1, nickname_lower = ?2 WHERE id = ?3", params![n, n.to_lowercase(), id])?;
+                let (current, changed_at): (String, Option<i64>) = tx.query_row(
+                    "SELECT nickname, nickname_changed_at FROM accounts WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                if *n != current {
+                    let now = db::now();
+                    if let Some(from) = nickname_change_from(changed_at, now) {
+                        let days = (from - now + 86_399) / 86_400;
+                        return Err(Error::with_code(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "nickname_too_soon",
+                            format!(
+                                "the nickname can be changed once a month: again in {days} day{}",
+                                if days == 1 { "" } else { "s" }
+                            ),
+                        ));
+                    }
+                    nickname_free(&tx, n, Some(id))?;
+                    tx.execute(
+                        "UPDATE accounts SET nickname = ?1, nickname_lower = ?2, nickname_changed_at = ?3 WHERE id = ?4",
+                        params![n, n.to_lowercase(), now, id],
+                    )?;
+                }
             }
             if let Some(e) = &email {
                 if let Some(e) = e {

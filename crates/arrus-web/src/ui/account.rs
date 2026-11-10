@@ -1,4 +1,5 @@
-//! Account settings: the logged-in account changes its nickname, email or password.
+//! Account settings: the logged-in account changes its email or password
+//! (the nickname is in [`super::settings`]: once a month).
 
 use arrus_api::{MIN_PASSWORD_LEN, Me, UpdateMe};
 use egui::RichText;
@@ -11,7 +12,6 @@ use crate::theme;
 pub struct AccountUi {
     open: bool,
     busy: bool,
-    nickname: String,
     email: String,
     new_password: String,
     new_password2: String,
@@ -23,7 +23,6 @@ pub fn open(app: &mut App) {
     let Some(me) = &app.me else { return };
     app.account = AccountUi {
         open: true,
-        nickname: me.username.clone(),
         email: me.email.clone().unwrap_or_default(),
         ..Default::default()
     };
@@ -62,16 +61,12 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
     let a = &mut app.account;
     let pw_mismatch = !a.new_password.is_empty() && a.new_password != a.new_password2;
     let pw_short = !a.new_password.is_empty() && a.new_password.chars().count() < MIN_PASSWORD_LEN;
-    let changed = a.nickname.trim() != me.username
-        || a.email.trim() != me.email.as_deref().unwrap_or("")
+    let changed = a.email.trim() != me.email.as_deref().unwrap_or("")
         || !a.new_password.is_empty();
-    let valid = changed && !a.current.is_empty() && !pw_mismatch && !pw_short && !a.busy && !a.nickname.trim().is_empty();
+    let valid = changed && !a.current.is_empty() && !pw_mismatch && !pw_short && !a.busy;
     let c = widgets::dialog(ctx, "account_settings", "Account settings", "Save", false, valid, |ui| {
         ui.set_min_width(340.0);
         egui::Grid::new("account_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label("Nickname");
-            ui.add(egui::TextEdit::singleline(&mut a.nickname).desired_width(220.0));
-            ui.end_row();
             ui.label("Email");
             ui.add(egui::TextEdit::singleline(&mut a.email).hint_text("you@example.com").desired_width(220.0));
             ui.end_row();
@@ -105,7 +100,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
             let a = &app.account;
             let body = UpdateMe {
                 current_password: a.current.clone(),
-                nickname: (a.nickname.trim() != me.username).then(|| a.nickname.trim().to_owned()),
+                nickname: None,
                 email: (a.email.trim() != me.email.as_deref().unwrap_or("")).then(|| a.email.trim().to_owned()),
                 new_password: (!a.new_password.is_empty()).then(|| a.new_password.clone()),
             };

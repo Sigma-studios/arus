@@ -15,7 +15,7 @@ use axum::extract::{DefaultBodyLimit, FromRequest, Request};
 use axum::http::{HeaderMap, Method, StatusCode, header::CONTENT_LENGTH};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
@@ -32,6 +32,7 @@ pub const JSON_LIMIT: usize = 64 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/me", get(accounts::me).patch(accounts::update_me))
+        .route("/me/prefs", put(accounts::update_prefs))
         .route("/accounts", get(accounts::list).post(accounts::create))
         .route("/accounts/{id}", patch(accounts::update).delete(accounts::delete))
         .route("/storage", get(me::storage))

@@ -20,7 +20,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     password_visible  TEXT,
     is_admin          INTEGER NOT NULL DEFAULT 0,
     is_premium        INTEGER NOT NULL DEFAULT 0,
-    created_at        INTEGER NOT NULL
+    created_at        INTEGER NOT NULL,
+    -- unix seconds of the last nickname change the person made themselves
+    nickname_changed_at INTEGER,
+    -- their settings, a JSON UserPrefs
+    prefs             TEXT
 );
 CREATE TABLE IF NOT EXISTS team_members (
     team_id     INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -104,7 +108,18 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch(ACCOUNTS)?;
     conn.execute_batch(SESSIONS)?;
     conn.execute_batch(SCHEMA)?;
+    add_column(conn, "accounts", "nickname_changed_at", "INTEGER")?;
+    add_column(conn, "accounts", "prefs", "TEXT")?;
     conn.pragma_update(None, "foreign_keys", "ON")
+}
+
+/// Add a column that databases made before it existed lack.
+fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?;
+    if !stmt.exists([column])? {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+    }
+    Ok(())
 }
 
 fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {

@@ -58,6 +58,8 @@ pub struct Editor {
     pinned: Option<usize>,
     /// A manual switch between formations being animated: (from, to, start time).
     glide: Option<(usize, usize, f64)>,
+    /// How long a manual switch between formations animates (the person's setting).
+    pub glide_secs: f64,
     pub playing: bool,
     last_tick: Option<f64>,
     pub audio: Option<Audio>,
@@ -159,6 +161,7 @@ impl Editor {
             t: 0.0,
             pinned: None,
             glide: None,
+            glide_secs: arrus_api::DEFAULT_GLIDE_SECS,
             playing: false,
             last_tick: None,
             audio,
@@ -341,7 +344,7 @@ impl Editor {
         if self.playing || from >= n || to >= n || self.pinned != Some(to) {
             return None;
         }
-        let k = (self.now - start) / GLIDE_SECS;
+        let k = (self.now - start) / self.glide_secs.max(1e-3);
         (k < 1.0).then(|| Phase::Transition { from, to, progress: Easing::InOut.apply(k) })
     }
 
@@ -350,7 +353,7 @@ impl Editor {
     pub fn switch_to_formation(&mut self, i: usize) {
         let from = self.cur();
         self.go_to_formation(i);
-        if from != i && !self.playing {
+        if from != i && !self.playing && self.glide_secs > 0.0 {
             self.glide = Some((from, i, self.now));
         }
     }
@@ -667,11 +670,12 @@ pub fn pick_background(ed: &Editor, app: &App) {
 
 // ---- frame ----------------------------------------------------------------
 
-/// How long a manual switch between formations animates.
-const GLIDE_SECS: f64 = 0.45;
 
 pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.now = ui.input(|i| i.time);
+    if let Some(me) = &app.me {
+        ed.glide_secs = me.prefs.glide_secs;
+    }
     ed.can_edit = ed.may_write;
     ed.touch = app.touch;
     if ed.compact != app.compact {
@@ -713,7 +717,7 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         inspector::show_sheet(ed, app, ui, &mut open);
         ed.show_inspector = open;
     }
-    egui::CentralPanel::default().frame(Frame::new().fill(theme::BG)).show(ui, |ui| stage::show(ed, ui));
+    egui::CentralPanel::default().frame(Frame::new().fill(theme::bg())).show(ui, |ui| stage::show(ed, ui));
     modals(ed, app, ui.ctx());
 }
 
@@ -793,7 +797,7 @@ fn keyboard(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
 
 fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     egui::Panel::top("editor_bar")
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(12, 7)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(12, 7)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let back = if ed.compact { "←" } else { "← Library" };
@@ -913,7 +917,7 @@ pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
         .resizable(true)
         .default_size(h * 0.4)
         .size_range(140.0..=(h * 0.7).max(160.0))
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::same(12)))
 }
 
 /// Phone layout: every tool in one row at the bottom of the screen, in its
@@ -921,7 +925,7 @@ pub fn sheet(id: &str, ui: &Ui) -> egui::Panel {
 /// moving the stage.
 fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     egui::Panel::bottom("tools")
-        .frame(Frame::new().fill(theme::SURFACE).inner_margin(Margin::symmetric(8, 8)))
+        .frame(Frame::new().fill(theme::surface()).inner_margin(Margin::symmetric(8, 8)))
         .show(ui, |ui| {
             ui.spacing_mut().interact_size.y = 44.0;
             ui.spacing_mut().button_padding = vec2(14.0, 9.0);
@@ -990,7 +994,7 @@ fn formations_panel(ed: &mut Editor, ui: &mut Ui) {
             .resizable(true)
             .default_size(250.0)
             .size_range(200.0..=420.0)
-            .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+            .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::same(12)))
             .show(ui, |ui| formations_ui(ed, ui));
     }
 }
@@ -1019,16 +1023,18 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
             let p = ui.painter();
             let selected = i == cur;
             let fill = if selected {
-                theme::ACCENT_DIM
+                theme::accent_dim()
             } else if resp.hovered() {
-                theme::HOVER
+                theme::hover()
             } else {
-                theme::SURFACE
+                theme::surface()
             };
             p.rect_filled(rect.shrink2(vec2(0.0, 1.5)), 6.0, fill);
             let num_c = rect.left_center() + vec2(18.0, 0.0);
-            p.circle_filled(num_c, 11.0, if selected { theme::ACCENT } else { theme::RAISED });
-            p.text(num_c, egui::Align2::CENTER_CENTER, (i + 1).to_string(), egui::FontId::proportional(12.0), theme::TEXT);
+            let num_fill = if selected { theme::accent() } else { theme::raised() };
+            p.circle_filled(num_c, 11.0, num_fill);
+            let num_text = if selected { theme::on_color(num_fill) } else { theme::TEXT };
+            p.text(num_c, egui::Align2::CENTER_CENTER, (i + 1).to_string(), egui::FontId::proportional(12.0), num_text);
             let name = f.name.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
             let dur = util::fmt_secs(f.duration);
             let right = p.text(
@@ -1055,7 +1061,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
             for (k, (_, color, _)) in here.iter().enumerate() {
                 let c = egui::pos2(right.left() - 10.0 - 12.0 * k as f32, rect.center().y);
                 p.circle_filled(c, 5.0, *color);
-                p.circle_stroke(c, 5.0, egui::Stroke::new(1.0, theme::PANEL));
+                p.circle_stroke(c, 5.0, egui::Stroke::new(1.0, theme::panel()));
             }
             let resp = if here.is_empty() {
                 resp

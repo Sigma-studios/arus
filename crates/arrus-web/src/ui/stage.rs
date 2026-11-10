@@ -323,7 +323,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
 
     // Paint.
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, theme::BG);
+    painter.rect_filled(rect, 0.0, theme::bg());
     let background = ed.bg_tex.as_ref().map(|(_, t)| BgImage { texture: t.id(), size: t.size_vec2() });
     // Redo the display after edits this frame so drags feel immediate.
     let phase = ed.phase();
@@ -397,8 +397,8 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
     let mut child = ui.new_child(UiBuilder::new().max_rect(bar).layout(Layout::left_to_right(Align::Center)));
     let ui = &mut child;
     let frame = egui::Frame::new()
-        .fill(theme::SURFACE.gamma_multiply(0.92))
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::surface().gamma_multiply(0.92))
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(8)
         .inner_margin(egui::Margin::symmetric(6, 4));
     frame.show(ui, |ui| {

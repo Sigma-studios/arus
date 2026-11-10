@@ -3,16 +3,16 @@
 # Three cheer mats running left to right (horizontal strips), stacked back to front.
 import sys, zlib, struct
 W, H, N = 1200, 600, 3
-BLUE = (0x1F, 0x4E, 0xA8)
-DARK = tuple(int(c * 0.86) for c in BLUE)
-SEAM = (0xD8, 0xE2, 0xF5)
+MAT = (0x4A, 0x4A, 0x50)
+DARK = (0x42, 0x42, 0x48)
+SEAM = (0x6C, 0x6C, 0x74)
 def px(x, y):
     i = min(y * N // H, N - 1)
     top = i * H // N
     bot = (i + 1) * H // N
     if y - top < 2 or bot - 1 - y < 2 or x < 3 or x > W - 4:
         return SEAM
-    return DARK if i % 2 else BLUE
+    return DARK if i % 2 else MAT
 raw = b"".join(b"\0" + bytes(c for x in range(W) for c in px(x, y)) for y in range(H))
 def chunk(t, d):
     return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)

@@ -132,7 +132,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let compact = app.compact;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Accounts");
@@ -184,7 +184,7 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
                 widgets::badge(ui, "ADMIN", theme::SELECT);
             }
             if a.is_premium {
-                widgets::badge(ui, "PREMIUM", theme::ACCENT);
+                widgets::badge(ui, "PREMIUM", theme::accent());
             }
             match &a.email {
                 Some(e) => ui.label(RichText::new(e).color(theme::TEXT_WEAK)),
@@ -252,7 +252,7 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
                         if ui.link(RichText::new(&t.name).strong()).on_hover_text("Open this team's library").clicked() {
                             open_team = Some(t.team_id);
                         }
-                        let color = if t.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::ACCENT };
+                        let color = if t.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() };
                         widgets::badge(ui, t.role.label(), color);
                     });
                     ui.indent(("account_team", a.id, t.team_id), |ui| {

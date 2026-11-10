@@ -193,7 +193,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let compact = app.compact;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
             ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 ui.set_max_width(720.0);
@@ -220,7 +220,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.heading(&name);
             if let Some(r) = app.my_role() {
-                widgets::badge(ui, r.label(), if r == TeamRole::Guest { theme::TEXT_WEAK } else { theme::ACCENT });
+                widgets::badge(ui, r.label(), if r == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() });
             }
         });
         let who = match &owner {
@@ -324,7 +324,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
         for i in &app.team_ui.invites {
             let url = link(i);
             ui.horizontal(|ui| {
-                widgets::badge(ui, i.role.label(), if i.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::ACCENT });
+                widgets::badge(ui, i.role.label(), if i.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() });
                 ui.label(RichText::new(&url).monospace().small());
                 if ui.small_button("Copy").clicked() {
                     ui.ctx().copy_text(url.clone());

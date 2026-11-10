@@ -20,7 +20,8 @@
 //! | POST | `/logout` | | 303 to `/login` | logged in |
 //! | GET  | `/healthz` | | `ok` | anyone |
 //! | GET  | `/api/me` | | [`Me`] | logged in |
-//! | PATCH | `/api/me` | [`UpdateMe`] | [`Me`]; 403 `wrong_password` | accounts |
+//! | PATCH | `/api/me` | [`UpdateMe`] | [`Me`]; 403 `wrong_password`, 429 `nickname_too_soon` | accounts |
+//! | PUT  | `/api/me/prefs` | [`UserPrefs`] | [`UserPrefs`] (cleaned) | logged in |
 //! | GET  | `/api/storage` | | [`Storage`] | logged in (per-team breakdown for admin only) |
 //! | GET  | `/api/teams` | | `Vec<Team>`: all teams | admin |
 //! | POST | `/api/teams` | [`CreateTeam`] | [`Team`]; 403 `limit_teams` | logged in (an account owns what it creates) |
@@ -151,6 +152,51 @@ pub struct Me {
     pub teams: Vec<MyTeam>,
     /// May create another team (free accounts: [`FREE_TEAMS`]).
     pub can_create_team: bool,
+    /// Unix seconds from when the nickname may be changed again (`None`: now).
+    #[serde(default)]
+    pub nickname_change_from: Option<i64>,
+    /// This person's own settings (colours, animation).
+    #[serde(default)]
+    pub prefs: UserPrefs,
+}
+
+/// Seconds between two nickname changes of an account (30 days).
+pub const NICKNAME_CHANGE_INTERVAL: i64 = 30 * 24 * 3600;
+
+/// Personal settings, kept on the server so they follow the account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserPrefs {
+    /// UI background colour (sRGB); `None`: the default. Kept dark.
+    #[serde(default)]
+    pub background: Option<[u8; 3]>,
+    /// Accent colour (sRGB); `None`: the default violet.
+    #[serde(default)]
+    pub accent: Option<[u8; 3]>,
+    /// How long switching between formations by hand animates, in seconds
+    /// (0: no animation), up to [`MAX_GLIDE_SECS`].
+    #[serde(default = "default_glide_secs")]
+    pub glide_secs: f64,
+}
+
+pub const DEFAULT_GLIDE_SECS: f64 = 0.45;
+pub const MAX_GLIDE_SECS: f64 = 2.0;
+
+fn default_glide_secs() -> f64 {
+    DEFAULT_GLIDE_SECS
+}
+
+impl Default for UserPrefs {
+    fn default() -> Self {
+        Self { background: None, accent: None, glide_secs: DEFAULT_GLIDE_SECS }
+    }
+}
+
+impl UserPrefs {
+    /// Within range (a NaN or out-of-range animation time is clamped).
+    pub fn cleaned(mut self) -> Self {
+        self.glide_secs = if self.glide_secs.is_finite() { self.glide_secs.clamp(0.0, MAX_GLIDE_SECS) } else { DEFAULT_GLIDE_SECS };
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,6 +335,7 @@ pub struct UpdateAccount {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct UpdateMe {
     pub current_password: String,
+    /// At most once per [`NICKNAME_CHANGE_INTERVAL`] (429 `nickname_too_soon`).
     #[serde(default)]
     pub nickname: Option<String>,
     /// `""` removes the email.
@@ -499,7 +546,7 @@ pub struct ApiError {
     /// Machine-readable reason when useful: `storage_full`, `username_taken`,
     /// `email_taken`, `name_taken`, `no_such_account`, `limit_teams`,
     /// `limit_choreographies`, `wrong_password`, `not_arrus`, `too_big`,
-    /// `invalid_webhook`, `invalid_mention`, `no_webhook`.
+    /// `invalid_webhook`, `invalid_mention`, `no_webhook`, `nickname_too_soon`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }

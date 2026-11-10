@@ -9,6 +9,7 @@ mod library;
 mod live;
 mod motion;
 mod net;
+mod settings;
 mod stage;
 mod team;
 mod timeline;
@@ -77,6 +78,7 @@ pub struct App {
     pub accounts: accounts::Accounts,
     pub team_ui: team::TeamUi,
     pub account: account::AccountUi,
+    pub settings: settings::SettingsUi,
     /// "New team" dialog: the name typed, and whether it is being created.
     new_team: Option<(String, bool)>,
     pub editor: Option<Box<editor::Editor>>,
@@ -88,7 +90,8 @@ pub struct App {
     touch: bool,
     /// Touch device or narrow viewport: phone layout.
     pub compact: bool,
-    styled_for: Option<bool>,
+    /// What the widget style was built for: touch layout, palette generation.
+    styled_for: Option<(bool, u32)>,
     /// Screen to go to once the user confirms leaving unsaved changes.
     leave_to: Option<Screen>,
 }
@@ -110,6 +113,7 @@ impl App {
             accounts: Default::default(),
             team_ui: Default::default(),
             account: Default::default(),
+            settings: Default::default(),
             new_team: None,
             editor: None,
             opening: None,
@@ -384,11 +388,11 @@ impl App {
     fn top_bar(&mut self, ui: &mut Ui) {
         let compact = self.compact;
         egui::Panel::top("top_bar")
-            .frame(Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(14, 8)))
+            .frame(Frame::new().fill(theme::bg()).inner_margin(Margin::symmetric(14, 8)))
             .show_separator_line(true)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("arus").size(if compact { 20.0 } else { 22.0 }).strong().color(theme::ACCENT));
+                    ui.label(RichText::new("arus").size(if compact { 20.0 } else { 22.0 }).strong().color(theme::accent()));
                     ui.add_space(if compact { 2.0 } else { 14.0 });
                     let in_editor = self.screen == Screen::Editor;
                     // On compact layouts the library is the only screen (the
@@ -424,7 +428,7 @@ impl App {
                             if me.role == Role::Admin {
                                 widgets::badge(ui, "ADMIN", theme::SELECT);
                             } else if me.premium {
-                                widgets::badge(ui, "PREMIUM", theme::ACCENT);
+                                widgets::badge(ui, "PREMIUM", theme::accent());
                             }
                             if self.team.is_some() && !self.can_edit() {
                                 widgets::badge(ui, "GUEST", theme::TEXT_WEAK);
@@ -523,6 +527,10 @@ impl App {
                     }
                 }
             }
+            if ui.button("Settings…").clicked() {
+                settings::open(self);
+                ui.close();
+            }
             if me.account_id.is_some() && ui.button("Account settings…").clicked() {
                 account::open(self);
                 ui.close();
@@ -588,7 +596,7 @@ impl App {
                         ToastKind::Error => theme::ERROR,
                     };
                     let r = Frame::new()
-                        .fill(theme::RAISED)
+                        .fill(theme::raised())
                         .stroke(Stroke::new(1.0, col.gamma_multiply(0.7)))
                         .corner_radius(8)
                         .inner_margin(Margin::symmetric(14, 10))
@@ -676,12 +684,16 @@ impl eframe::App for App {
 
         let narrow = ctx.content_rect().width() < 900.0;
         self.compact = self.touch || narrow;
-        if self.styled_for != Some(self.touch) {
+        if let Some(p) = settings::current_prefs(self) {
+            theme::set_palette(settings::palette_of(p));
+        }
+        let style = (self.touch, theme::generation());
+        if self.styled_for != Some(style) {
             theme::apply(&ctx, self.touch);
-            self.styled_for = Some(self.touch);
+            self.styled_for = Some(style);
         }
 
-        let bg = Frame::new().fill(theme::PANEL);
+        let bg = Frame::new().fill(theme::panel());
         if self.me.is_none() {
             egui::CentralPanel::default().frame(bg).show(ui, |ui| {
                 ui.centered_and_justified(|ui| match &self.boot_error {
@@ -722,6 +734,7 @@ impl eframe::App for App {
         }
         self.new_team_dialog(&ctx);
         account::dialog(self, &ctx);
+        settings::dialog(self, &ctx);
         self.toasts_ui(&ctx);
         self.alerts_ui(&ctx);
         web::set_unsaved(self.editor.as_ref().is_some_and(|e| e.dirty));

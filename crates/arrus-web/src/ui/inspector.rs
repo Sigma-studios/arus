@@ -23,7 +23,7 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         .resizable(true)
         .default_size(300.0)
         .size_range(260.0..=440.0)
-        .frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::same(12)))
         .show(ui, |ui| body(ed, app, ui));
 }
 
@@ -71,16 +71,16 @@ fn shape_picker(ui: &mut Ui, current: Option<DancerShape>, color: Color32, enabl
             let (r, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), sense);
             let selected = current == Some(s);
             let fill = if selected {
-                theme::ACCENT_DIM
+                theme::accent_dim()
             } else if resp.hovered() && enabled {
-                theme::HOVER
+                theme::hover()
             } else {
-                theme::RAISED
+                theme::raised()
             };
             let p = ui.painter();
             p.rect_filled(r, 6.0, fill);
             if selected {
-                p.rect_stroke(r, 6.0, Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
+                p.rect_stroke(r, 6.0, Stroke::new(1.0, theme::accent()), egui::StrokeKind::Inside);
             }
             paint::shape_icon(p, r, s, color);
             if resp.on_hover_text(geom::shape_label(s)).clicked() {

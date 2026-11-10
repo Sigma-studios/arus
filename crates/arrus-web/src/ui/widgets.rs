@@ -46,7 +46,7 @@ pub fn presence(ui: &mut Ui, others: &[&arrus_api::Viewer], max: usize) {
         let color = theme::person_color(&v.username);
         let p = ui.painter();
         p.circle_filled(r.center(), 12.5, color);
-        p.circle_stroke(r.center(), 12.5, Stroke::new(1.5, theme::PANEL));
+        p.circle_stroke(r.center(), 12.5, Stroke::new(1.5, theme::panel()));
         let initial: String = v.username.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
         p.text(r.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(13.0), Color32::WHITE);
         let doing = if v.can_write { "editing" } else { "viewing" };
@@ -62,7 +62,8 @@ pub fn presence(ui: &mut Ui, others: &[&arrus_api::Viewer], max: usize) {
 }
 
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
-    ui.add(egui::Button::new(RichText::new(text).color(Color32::WHITE).strong()).fill(theme::primary_fill()))
+    let fill = theme::primary_fill();
+    ui.add(egui::Button::new(RichText::new(text).color(theme::on_color(fill)).strong()).fill(fill))
 }
 
 pub fn danger_button(ui: &mut Ui, text: &str) -> Response {
@@ -90,8 +91,8 @@ pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
 /// A card-like frame for content blocks.
 pub fn card() -> egui::Frame {
     egui::Frame::new()
-        .fill(theme::SURFACE)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::surface())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::same(14))
 }
@@ -165,7 +166,7 @@ pub fn dialog(
 pub fn meter(ui: &mut Ui, size: Vec2, fraction: f32, color: Color32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, size.y / 2.0, theme::RAISED);
+    p.rect_filled(rect, size.y / 2.0, theme::raised());
     let mut fill = rect;
     fill.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     if fill.width() > 0.5 {
