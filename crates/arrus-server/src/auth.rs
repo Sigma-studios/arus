@@ -273,7 +273,7 @@ pub fn load_account(conn: &Connection, id: i64) -> rusqlite::Result<Option<Accou
 /// The session of a request, if any.
 pub async fn from_headers(state: &AppState, headers: &HeaderMap) -> Result<Option<Auth>> {
     let Some(token) = session_token(headers) else { return Ok(None) };
-    state.db(move |_, conn| Ok(lookup(conn, &token)?)).await
+    state.db_live(move |_, conn| Ok(lookup(conn, &token)?)).await
 }
 
 pub fn session_cookie(state: &AppState, token: &str) -> HeaderValue {

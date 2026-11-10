@@ -8,12 +8,19 @@
 //! streams them back, numbered by revision; a gap in the numbers (missed
 //! messages, a reconnect) makes the client reload the document and replay
 //! its unconfirmed batches on top. Batches are safe to resend.
+//!
+//! Everything goes over one WebSocket: changes, where we are, and the dancers
+//! being dragged (streamed so others see them move, stored only on drop).
+//! Where the WebSocket cannot get through (it never opens), the editor falls
+//! back to the server-sent event stream plus one POST per batch / presence.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 use arrus_api::patch::{self, IMAGE_PATH, PatchOp};
-use arrus_api::{ChoreographyDoc, ChoreographyId, LiveEvent, PatchChoreography, PresenceUpdate, Saved, Viewer};
+use arrus_api::{
+    ChoreographyDoc, ChoreographyId, LiveEvent, LiveRequest, MovingDancer, PatchChoreography, PresenceUpdate, Saved, Viewer,
+};
 use arrus_core::Choreography;
 use serde_json::Value;
 
@@ -26,8 +33,17 @@ use crate::web;
 const DEBOUNCE: f64 = 0.25;
 /// …but during a continuous change (a drag) send at least this often.
 const MAX_DELAY: f64 = 0.5;
+/// While dragging dancers over the WebSocket the drag is streamed instead
+/// (see [`MOVING_EVERY`]), and stored on drop or at least this often.
+const DRAG_MAX_DELAY: f64 = 5.0;
 /// Where we are (formation, selection) is reported at most this often.
 const PRESENCE_EVERY: f64 = 0.15;
+/// Dragged dancers are streamed this often.
+const MOVING_EVERY: f64 = 0.1;
+/// Wait before opening a new WebSocket after one closed.
+const RECONNECT_SECS: f64 = 3.0;
+/// WebSockets that never open, in a row, before using the fallback.
+const SOCKET_TRIES: u32 = 2;
 
 struct Batch {
     id: u64,
@@ -57,6 +73,18 @@ pub struct Live {
     /// Saving failed for lack of a connection; retrying.
     pub offline: bool,
     pub viewers: Vec<Viewer>,
+    /// The live WebSocket, while connecting or open.
+    socket: Option<web::Socket>,
+    socket_open: bool,
+    socket_closed_at: Option<f64>,
+    socket_ever_opened: bool,
+    /// Sockets that closed without opening, in a row.
+    socket_failures: u32,
+    /// The WebSocket does not get through: event stream + POSTs instead.
+    pub fallback: bool,
+    /// Dragged dancers last streamed (formation, dancers) and when.
+    moving_sent: Option<(usize, Vec<MovingDancer>)>,
+    moving_at: f64,
     stream: Option<web::EventStream>,
     stream_dead_since: Option<f64>,
     resyncing: bool,
@@ -102,6 +130,14 @@ impl Live {
             failures: 0,
             offline: false,
             viewers: Vec::new(),
+            socket: None,
+            socket_open: false,
+            socket_closed_at: None,
+            socket_ever_opened: false,
+            socket_failures: 0,
+            fallback: false,
+            moving_sent: None,
+            moving_at: 0.0,
             stream: None,
             stream_dead_since: None,
             resyncing: false,
@@ -141,6 +177,38 @@ impl Live {
             }
         }
         out
+    }
+
+    /// The WebSocket ended (`opened`: after it had opened).
+    fn socket_closed(&mut self, now: f64, opened: bool) {
+        self.socket = None;
+        self.socket_open = false;
+        self.socket_closed_at = Some(now);
+        self.connected = false;
+        self.viewers.clear();
+        self.presence_sent = None;
+        self.moving_sent = None;
+        // An answer that will never come: send the batch again once back.
+        self.inflight = None;
+        if !opened {
+            self.socket_failures += 1;
+            if !self.socket_ever_opened && self.socket_failures >= SOCKET_TRIES {
+                self.fallback = true;
+            }
+        }
+        self.offline = self.unsaved();
+    }
+
+    /// Connected: changes we send will come back confirmed.
+    fn link_up(&self) -> bool {
+        if self.fallback { self.stream.is_some() && self.stream_dead_since.is_none() } else { self.socket_open }
+    }
+
+    fn send(&self, req: &LiveRequest) -> bool {
+        match (&self.socket, self.socket_open) {
+            (Some(s), true) => serde_json::to_string(req).is_ok_and(|t| s.send(&t)),
+            _ => false,
+        }
     }
 
     fn has_image_op(&self) -> bool {
@@ -221,8 +289,13 @@ impl Editor {
 pub fn sync(ed: &mut Editor, app: &mut App) {
     let id = ed.summary.id;
     let now = ed.now;
-    open_stream(ed, app, id, now);
+    if ed.live.fallback {
+        open_stream(ed, app, id, now);
+    } else {
+        open_socket(ed, app, id, now);
+    }
     send_presence(ed, app, id, now);
+    send_moving(ed, app, now);
     // A drag changes the document every frame without going through
     // `Editor::edit`: keep counting it as changed (sent at least every
     // MAX_DELAY), and once more when it ends, however it ends.
@@ -233,7 +306,9 @@ pub fn sync(ed: &mut Editor, app: &mut App) {
             ed.live.note_change(now);
         }
     }
-    if ed.live.changed && (now - ed.live.last_change >= DEBOUNCE || now - ed.live.last_collect >= MAX_DELAY) {
+    let streaming = !ed.live.fallback && matches!(ed.drag, Some(Drag::Dancers { .. }));
+    let max_delay = if streaming { DRAG_MAX_DELAY } else { MAX_DELAY };
+    if ed.live.changed && (now - ed.live.last_change >= DEBOUNCE || now - ed.live.last_collect >= max_delay) {
         ed.collect();
     }
     ed.dirty = ed.live.unsaved();
@@ -245,6 +320,13 @@ pub fn sync(ed: &mut Editor, app: &mut App) {
     }
     let Some(b) = ed.live.unacked.iter().find(|b| b.acked_rev.is_none()) else { return };
     let batch = b.id;
+    if !ed.live.fallback {
+        // Answered with `Saved` / `Refused` on the socket.
+        if ed.live.send(&LiveRequest::Patch { batch, ops: b.ops.clone() }) {
+            ed.live.inflight = Some(batch);
+        }
+        return;
+    }
     let body = PatchChoreography { session: ed.live.session.clone(), batch, ops: b.ops.clone() };
     ed.live.inflight = Some(batch);
     app.net.spawn(async move {
@@ -269,6 +351,14 @@ fn send_presence(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
         app.net.ctx().request_repaint_after(std::time::Duration::from_millis(150));
         return;
     }
+    if !live.fallback {
+        let req = LiveRequest::Presence { formation: here.formation, selected: here.selected.clone(), dragging: here.dragging };
+        if live.send(&req) {
+            live.presence_at = now;
+            live.presence_sent = Some(here);
+        }
+        return;
+    }
     live.presence_busy = true;
     live.presence_at = now;
     live.presence_sent = Some(here.clone());
@@ -286,6 +376,36 @@ fn send_presence(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
     });
 }
 
+/// While dragging dancers: stream where they are, so the others see them move.
+fn send_moving(ed: &mut Editor, app: &mut App, now: f64) {
+    let live = &ed.live;
+    if live.fallback || !live.socket_open || !live.connected || !ed.can_edit {
+        return;
+    }
+    let Some(Drag::Dancers { starts, moved: true, .. }) = &ed.drag else {
+        ed.live.moving_sent = None;
+        return;
+    };
+    let wait = MOVING_EVERY - (now - live.moving_at);
+    if wait > 0.0 {
+        app.net.ctx().request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        return;
+    }
+    let f = ed.cur();
+    let Some(units) = ed.doc.formations.get(f).map(|x| &x.units) else { return };
+    let dancers: Vec<MovingDancer> = starts
+        .iter()
+        .filter_map(|(i, _)| units.get(*i).map(|u| MovingDancer { index: *i, x: u.position.x, y: u.position.y }))
+        .collect();
+    if live.moving_sent.as_ref().is_some_and(|(sf, sd)| *sf == f && *sd == dancers) {
+        return;
+    }
+    if ed.live.send(&LiveRequest::Moving { formation: f, dancers: dancers.clone() }) {
+        ed.live.moving_sent = Some((f, dancers));
+        ed.live.moving_at = now;
+    }
+}
+
 fn on_sent(app: &mut App, id: ChoreographyId, batch: u64, r: net::ApiResult<Saved>) {
     let Some(ed) = editor_for(app, id) else { return };
     let now = ed.now;
@@ -301,7 +421,7 @@ fn on_sent(app: &mut App, id: ChoreographyId, batch: u64, r: net::ApiResult<Save
             let rev = ed.summary.revision;
             ed.summary = saved.summary;
             ed.summary.revision = rev;
-            if ed.live.stream.is_none() || ed.live.stream_dead_since.is_some() {
+            if !ed.live.link_up() {
                 // No live stream to confirm it: catch up by reloading.
                 resync(app, id);
             }
@@ -320,6 +440,40 @@ fn on_sent(app: &mut App, id: ChoreographyId, batch: u64, r: net::ApiResult<Save
             app.fail(e);
             resync(app, id);
         }
+    }
+}
+
+fn open_socket(ed: &mut Editor, app: &mut App, id: ChoreographyId, now: f64) {
+    let live = &mut ed.live;
+    if live.socket.is_some() || live.socket_closed_at.is_some_and(|t| now - t < RECONNECT_SECS) {
+        return;
+    }
+    let path = format!("/api/choreographies/{id}/ws?session={}", live.session);
+    let (net1, net2, net3) = (app.net.clone(), app.net.clone(), app.net.clone());
+    live.socket = web::Socket::open(
+        &path,
+        move || {
+            net1.post(move |app: &mut App| {
+                if let Some(ed) = editor_for(app, id) {
+                    ed.live.socket_open = true;
+                    ed.live.socket_ever_opened = true;
+                    ed.live.socket_failures = 0;
+                    ed.live.offline = false;
+                }
+            })
+        },
+        move |text| net2.post(move |app: &mut App| on_event(app, id, &text)),
+        move |opened| {
+            net3.post(move |app: &mut App| {
+                let Some(ed) = editor_for(app, id) else { return };
+                let now = ed.now;
+                ed.live.socket_closed(now, opened);
+                app.net.ctx().request_repaint();
+            })
+        },
+    );
+    if live.socket.is_none() {
+        live.fallback = true;
     }
 }
 
@@ -361,6 +515,32 @@ fn on_event(app: &mut App, id: ChoreographyId, text: &str) {
         return;
     }
     let Some(ed) = editor_for(app, id) else { return };
+    match ev {
+        LiveEvent::Saved { batch, summary } => {
+            if ed.live.inflight == Some(batch) {
+                on_sent(app, id, batch, Ok(Saved { summary }));
+            }
+            return;
+        }
+        LiveEvent::Refused { batch, status, error } => {
+            if ed.live.inflight == Some(batch) {
+                let e = match status {
+                    401 => ApiError::Unauthorized,
+                    507 => ApiError::StorageFull,
+                    _ => ApiError::Http { status, message: error.error, code: error.code },
+                };
+                on_sent(app, id, batch, Err(e));
+            }
+            return;
+        }
+        LiveEvent::Moving { session, formation, dancers } => {
+            if session != ed.live.session {
+                ed.remote_moving(formation, &dancers);
+            }
+            return;
+        }
+        _ => {}
+    }
     ed.live.stream_dead_since = None;
     if apply_event(ed, ev) {
         resync(app, id);
@@ -401,7 +581,13 @@ fn apply_event(ed: &mut Editor, ev: LiveEvent) -> bool {
                 ed.live.bg_sent = ed.bg_data.clone();
             }
             ed.live.remote_log.push(Rc::new(ops));
-            return !ed.rebuild();
+            let f = ed.cur();
+            let before = ed.shown_positions(f);
+            if !ed.rebuild() {
+                return true;
+            }
+            ed.glide_to_changes(f, &before);
+            return false;
         }
         LiveEvent::Summary { summary } => {
             let music_changed = summary.music != ed.summary.music;
@@ -412,7 +598,7 @@ fn apply_event(ed: &mut Editor, ev: LiveEvent) -> bool {
                 ed.reload_audio();
             }
         }
-        LiveEvent::Deleted => {}
+        LiveEvent::Deleted | LiveEvent::Saved { .. } | LiveEvent::Refused { .. } | LiveEvent::Moving { .. } => {}
     }
     false
 }
@@ -458,7 +644,12 @@ fn resync(app: &mut App, id: ChoreographyId) {
                 Err(_) => {
                     // Try again shortly (the stream's next hello will ask too).
                     ed.live.server_rev = -2;
-                    ed.live.stream_dead_since.get_or_insert(ed.now);
+                    if ed.live.fallback {
+                        ed.live.stream_dead_since.get_or_insert(ed.now);
+                    } else if ed.live.socket.is_some() {
+                        // Reconnect shortly: the new socket's hello asks again.
+                        ed.live.socket_closed(ed.now, true);
+                    }
                 }
             }
         }

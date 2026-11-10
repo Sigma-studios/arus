@@ -5,12 +5,13 @@ use std::time::Duration;
 
 use arrus_api::{
     ChoreographyDoc, ChoreographySummary, Conflict, CreateChoreography, LiveEvent, MAX_PRESENCE_SELECTED, MAX_SESSION_LEN,
-    PatchChoreography, PresenceUpdate, SaveChoreography, Saved, Viewer, patch as jpatch,
+    LiveRequest, MAX_MOVING, PatchChoreography, PatchOp, PresenceUpdate, SaveChoreography, Saved, Viewer,
 };
 use arrus_core::Choreography;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -19,7 +20,7 @@ use serde::Deserialize;
 use super::ApiJson;
 use crate::auth::{Auth, User};
 use crate::error::{Error, Result};
-use crate::{AppState, db, storage};
+use crate::{AppState, db, docs, storage};
 
 /// A choreography serialized for storage.
 pub struct Stored {
@@ -226,25 +227,23 @@ pub async fn patch(
     if body.session.is_empty() || body.session.len() > MAX_SESSION_LEN {
         return Err(Error::bad_request("bad session id"));
     }
-    let by = auth.user.username();
+    live_patch(&state, auth.user, id, body.session, body.batch, body.ops).await.map(Json)
+}
+
+/// A batch of live changes (from `POST …/patch` or the WebSocket): applied
+/// in memory (see [`crate::docs`]) and sent to everyone viewing.
+async fn live_patch(state: &AppState, user: User, id: i64, session: String, batch: u64, ops: Vec<PatchOp>) -> Result<Saved> {
+    let by = user.username();
     state
-        .db(move |s, conn| {
-            let meta = writable(conn, &auth.user, id)?;
-            if body.ops.is_empty() {
-                return Ok(Json(Saved { summary: summary(conn, id)? }));
+        .db_live(move |s, conn| {
+            let meta = writable(conn, &user, id)?;
+            if ops.is_empty() {
+                return Ok(Saved { summary: docs::summary(s, conn, id)? });
             }
-            let json: String = conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0))?;
-            let mut value: serde_json::Value = serde_json::from_str(&json).map_err(Error::internal)?;
-            jpatch::apply(&mut value, &body.ops);
-            let data: Choreography = serde_json::from_value(value)
-                .map_err(|e| Error::bad_request(format!("this change would break the choreography: {e}")))?;
-            let summary = store(s, conn, id, &meta, data, &by)?;
+            let summary = docs::apply_patch(s, conn, &meta, &ops, &by)?;
             // Sent under the database lock: viewers get revisions in order.
-            s.hub.send(
-                id,
-                &LiveEvent::Patch { revision: summary.revision, session: body.session, batch: body.batch, by, ops: body.ops },
-            );
-            Ok(Json(Saved { summary }))
+            s.hub.send(id, &LiveEvent::Patch { revision: summary.revision, session, batch, by, ops });
+            Ok(Saved { summary })
         })
         .await
 }
@@ -261,7 +260,7 @@ pub async fn presence(
         return Err(Error::bad_request("bad presence update"));
     }
     let user = auth.user.clone();
-    state.db(move |_, conn| readable(conn, &user, id).map(|_| ())).await?;
+    state.db_live(move |_, conn| readable(conn, &user, id).map(|_| ())).await?;
     let mine = state.hub.viewers(id).iter().any(|v| v.session == body.session && v.username == auth.user.username());
     if !mine || !state.hub.update(id, &body) {
         return Err(Error::not_found());
@@ -316,6 +315,144 @@ pub async fn live(
     res.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
     res.headers_mut().insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     Ok(res)
+}
+
+/// Live co-editing over one WebSocket: the [`LiveEvent`]s of
+/// [`live`], plus answers to the [`LiveRequest`]s the editor sends (patches,
+/// presence, dancers being dragged). Login and access are checked when it
+/// opens; each patch checks the session and write access again.
+pub async fn ws(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<i64>,
+    Query(q): Query<LiveQuery>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Result<Response> {
+    if !valid_session(&q.session) {
+        return Err(Error::bad_request("bad session id"));
+    }
+    // Browsers send cookies with WebSocket requests from other sites: only
+    // accept our own pages.
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())
+        && !same_site(&state, &headers, origin)
+    {
+        return Err(Error::forbidden("cross-site WebSocket"));
+    }
+    let user = auth.user.clone();
+    let meta = state.db_live(move |_, conn| readable(conn, &user, id)).await?;
+    let can_write = auth.user.check_write(meta.team_id).is_ok();
+    Ok(upgrade
+        .max_message_size(super::JSON_LIMIT)
+        .on_upgrade(move |socket| live_socket(state, auth, id, q.session, can_write, socket)))
+}
+
+/// `origin` is this site: the host asked for (directly or through a
+/// reverse proxy), or the configured public URL.
+fn same_site(state: &AppState, headers: &HeaderMap, origin: &str) -> bool {
+    let origin_host = origin.split_once("://").map_or(origin, |(_, h)| h);
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let hosts = [header("host"), header("x-forwarded-host").and_then(|h| h.split(',').next()).map(str::trim)];
+    hosts.into_iter().flatten().any(|h| h.eq_ignore_ascii_case(origin_host))
+        || state.config.public_url.as_deref().is_some_and(|u| u.trim_end_matches('/').eq_ignore_ascii_case(origin))
+}
+
+fn valid_session(s: &str) -> bool {
+    !s.is_empty() && s.len() <= MAX_SESSION_LEN && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// Shortest time between two [`LiveRequest::Moving`] passed on from one socket.
+const MOVING_EVERY: Duration = Duration::from_millis(40);
+/// Pings keep proxies from closing a quiet socket.
+const PING_EVERY: Duration = Duration::from_secs(25);
+
+async fn live_socket(state: AppState, auth: Auth, id: i64, session: String, can_write: bool, mut socket: WebSocket) {
+    let username = auth.user.username();
+    let viewer = Viewer { session: session.clone(), username: username.clone(), can_write, ..Default::default() };
+    // Subscribe before reading the revision, so no change falls in between.
+    let (conn, mut rx) = state.hub.join(id, viewer);
+    let _leave = crate::live::Leave { state: state.clone(), id, conn };
+    let Ok(revision) = state.db(move |s, conn| Ok(docs::summary(s, conn, id)?.revision)).await else { return };
+    if send_event(&mut socket, &LiveEvent::Hello { revision }).await.is_err() {
+        return;
+    }
+    let mut ping = tokio::time::interval(PING_EVERY);
+    ping.tick().await;
+    let mut last_moving: Option<tokio::time::Instant> = None;
+    // Our own dragged dancers are not sent back (the tag and session come first).
+    let own_moving = format!(r#"{{"type":"moving","session":{}"#, serde_json::Value::from(session.clone()));
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                let text: std::sync::Arc<str> = match msg {
+                    Ok(m) => m,
+                    // Fell behind: make the client reload the document.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => r#"{"type":"hello","revision":-1}"#.into(),
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                if text.starts_with(&own_moving) {
+                    continue;
+                }
+                if socket.send(Message::Text((&*text).into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                let text = match msg {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(_)) => continue,
+                };
+                let Ok(req) = serde_json::from_str::<LiveRequest>(&text) else { continue };
+                let reply = match req {
+                    LiveRequest::Patch { batch, ops } => {
+                        // Logged out or removed from the team since the socket opened?
+                        let token = auth.token.clone();
+                        let user = state
+                            .db_live(move |_, conn| Ok(crate::auth::lookup(conn, &token)?))
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|a| a.user);
+                        let r = match user {
+                            Some(user) => live_patch(&state, user, id, session.clone(), batch, ops).await,
+                            None => Err(Error::unauthorized()),
+                        };
+                        Some(match r {
+                            Ok(saved) => LiveEvent::Saved { batch, summary: saved.summary },
+                            Err(e) => LiveEvent::Refused { batch, status: e.status().as_u16(), error: e.api_error() },
+                        })
+                    }
+                    LiveRequest::Presence { formation, selected, dragging } => {
+                        if selected.len() <= MAX_PRESENCE_SELECTED {
+                            state.hub.update(id, &PresenceUpdate { session: session.clone(), formation, selected, dragging });
+                        }
+                        None
+                    }
+                    LiveRequest::Moving { formation, dancers } => {
+                        let now = tokio::time::Instant::now();
+                        if can_write && dancers.len() <= MAX_MOVING && last_moving.is_none_or(|t| now - t >= MOVING_EVERY) {
+                            last_moving = Some(now);
+                            state.hub.send(id, &LiveEvent::Moving { session: session.clone(), formation, dancers });
+                        }
+                        None
+                    }
+                };
+                if let Some(ev) = reply && send_event(&mut socket, &ev).await.is_err() {
+                    break;
+                }
+            }
+            _ = ping.tick() => {
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn send_event(socket: &mut WebSocket, ev: &LiveEvent) -> Result<(), axum::Error> {
+    socket.send(Message::Text(serde_json::to_string(ev).unwrap_or_default().into())).await
 }
 
 pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<StatusCode> {

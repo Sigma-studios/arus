@@ -45,6 +45,7 @@
 //! | POST | `/api/choreographies/{id}/patch` | [`PatchChoreography`] | [`Saved`] | writers |
 //! | GET  | `/api/choreographies/{id}/live?session={s}` | | `text/event-stream` of [`LiveEvent`] JSON | team readers |
 //! | POST | `/api/choreographies/{id}/presence` | [`PresenceUpdate`] | 204 | team readers |
+//! | GET  | `/api/choreographies/{id}/ws?session={s}` | WebSocket: [`LiveRequest`] JSON in, [`LiveEvent`] JSON out | team readers |
 //! | GET  | `/api/choreographies/{id}/export` | | `.arrus` bytes (`Content-Disposition: attachment`) | team readers |
 //! | GET  | `/api/choreographies/{id}/pdf` | | PDF, one page per formation (`Content-Disposition: attachment`) | team readers |
 //! | POST | `/api/teams/{id}/import` | raw `.arrus` / `.aubkp` bytes, header `X-Filename` | [`ImportResult`] | writers of that team |
@@ -416,6 +417,44 @@ pub enum LiveEvent {
     Summary { summary: ChoreographySummary },
     /// The choreography was deleted.
     Deleted,
+    /// WebSocket only: our batch `batch` is stored (as `summary.revision`).
+    Saved { batch: u64, summary: ChoreographySummary },
+    /// WebSocket only: our batch `batch` was refused, with the HTTP status
+    /// and error the patch endpoint would have answered.
+    Refused { batch: u64, status: u16, error: ApiError },
+    /// Dancers someone is dragging right now, where they are this instant.
+    /// Not stored: the change itself follows as a [`LiveEvent::Patch`].
+    Moving { session: String, formation: usize, dancers: Vec<MovingDancer> },
+}
+
+/// One dancer of a [`LiveEvent::Moving`] / [`LiveRequest::Moving`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MovingDancer {
+    pub index: usize,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Most dancers in one [`LiveRequest::Moving`].
+pub const MAX_MOVING: usize = 1000;
+
+/// What an editor sends over the live WebSocket. The session is the one the
+/// socket was opened with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LiveRequest {
+    /// Same as `POST …/patch`; answered with [`LiveEvent::Saved`] or [`LiveEvent::Refused`].
+    Patch { batch: u64, ops: Vec<PatchOp> },
+    /// Same as `POST …/presence`.
+    Presence {
+        formation: Option<usize>,
+        #[serde(default)]
+        selected: Vec<usize>,
+        #[serde(default)]
+        dragging: bool,
+    },
+    /// Dancers being dragged (a few times a second while dragging), passed on as is.
+    Moving { formation: usize, dancers: Vec<MovingDancer> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

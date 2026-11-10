@@ -62,6 +62,13 @@ impl Error {
             Error::Conflict(_) => None,
         }
     }
+    /// The body this error answers with (a conflict as a plain message).
+    pub fn api_error(&self) -> ApiError {
+        match self {
+            Error::Api { error, code, .. } => ApiError { error: error.clone(), code: code.map(str::to_string) },
+            Error::Conflict(c) => ApiError { error: format!("{} saved in the meantime", c.updated_by), code: None },
+        }
+    }
 }
 
 impl From<rusqlite::Error> for Error {

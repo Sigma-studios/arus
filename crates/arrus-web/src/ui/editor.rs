@@ -49,6 +49,8 @@ pub struct Editor {
     pub dirty: bool,
     /// Live co-editing: autosave, other people's changes, presence.
     pub live: live::Live,
+    /// Other people's dancers gliding to where they put them.
+    pub motion: super::motion::Motion,
     pub t: f64,
     /// Formation picked from the list or with previous/next: it stays current
     /// while the playhead sits at its hold start (see `edit::phase`), and the
@@ -153,6 +155,7 @@ impl Editor {
             undo: UndoStack::new(UNDO_LIMIT),
             dirty: false,
             live,
+            motion: Default::default(),
             t: 0.0,
             pinned: None,
             glide: None,
@@ -667,7 +670,7 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     }
     ed.tick();
     live::sync(ed, app);
-    if ed.playing || ed.glide_phase().is_some() {
+    if ed.tick_motion() || ed.playing || ed.glide_phase().is_some() {
         ui.ctx().request_repaint();
     } else {
         ed.glide = None;

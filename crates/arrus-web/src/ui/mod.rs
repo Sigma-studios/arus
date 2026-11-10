@@ -7,6 +7,7 @@ mod editor;
 mod inspector;
 mod library;
 mod live;
+mod motion;
 mod net;
 mod stage;
 mod team;

@@ -4,6 +4,7 @@ pub mod alerts;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod docs;
 pub mod error;
 pub mod healthcheck;
 pub mod live;
@@ -32,6 +33,8 @@ pub struct Inner {
     /// Who has which choreography open, for live co-editing.
     pub hub: live::Hub,
     db: Mutex<Connection>,
+    /// Live changes not written to the database yet (locked under `db`).
+    docs: Mutex<docs::Docs>,
 }
 
 impl std::ops::Deref for AppState {
@@ -53,17 +56,44 @@ impl AppState {
         conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [db::now()])?;
         // The Discord webhook is set by the admin in the web UI.
         let notifier = alerts::Notifier::new(alerts::Discord::load(&conn)?, config.public_url.clone());
-        let state = AppState(Arc::new(Inner { config, music_dir, notifier, hub: live::Hub::default(), db: Mutex::new(conn) }));
+        let state = AppState(Arc::new(Inner {
+            config,
+            music_dir,
+            notifier,
+            hub: live::Hub::default(),
+            db: Mutex::new(conn),
+            docs: Mutex::default(),
+        }));
         {
             // The limit may have changed since the last run.
             let conn = state.db.lock().unwrap_or_else(|p| p.into_inner());
             storage::after_change(&state, &conn)?;
         }
+        docs::spawn_flusher(&state);
         Ok(state)
     }
 
-    /// Run `f` with the database connection on the blocking pool.
+    /// Run `f` with the database connection on the blocking pool, after
+    /// writing pending live changes (so `f` sees every choreography as it is).
     pub async fn db<T, F>(&self, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&AppState, &mut Connection) -> Result<T> + Send + 'static,
+    {
+        self.run_db(true, f).await
+    }
+
+    /// [`AppState::db`] without the flush, for the live hot paths (session
+    /// lookup, patches, presence) that never read choreography rows as a whole.
+    pub async fn db_live<T, F>(&self, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&AppState, &mut Connection) -> Result<T> + Send + 'static,
+    {
+        self.run_db(false, f).await
+    }
+
+    async fn run_db<T, F>(&self, flush: bool, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&AppState, &mut Connection) -> Result<T> + Send + 'static,
@@ -71,6 +101,9 @@ impl AppState {
         let state = self.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = state.db.lock().unwrap_or_else(|p| p.into_inner());
+            if flush && state.docs().any_dirty() {
+                docs::flush(&state, &conn);
+            }
             f(&state, &mut conn)
         })
         .await
@@ -78,9 +111,20 @@ impl AppState {
     }
 }
 
+impl Inner {
+    pub(crate) fn docs(&self) -> std::sync::MutexGuard<'_, docs::Docs> {
+        self.docs.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
 /// The whole application router.
 pub fn app(state: AppState) -> Router {
     routes::router(state)
+}
+
+/// Write live changes still held in memory (on shutdown).
+pub async fn flush(state: &AppState) {
+    let _ = state.db(|_, _| Ok(())).await;
 }
 
 /// Build the router from a config (opens the data dir).

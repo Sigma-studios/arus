@@ -17,9 +17,9 @@ arrus-api.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow = "1"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 # Streams for the live (server-sent events) endpoint.
-futures-util = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 http-body-util = "0.1.3"
@@ -43,3 +43,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+# WebSocket client for the live socket test.
+tokio-tungstenite = "0.28"

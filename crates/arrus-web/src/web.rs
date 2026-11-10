@@ -255,6 +255,64 @@ impl Drop for EventStream {
     }
 }
 
+/// A WebSocket to this site (`path` from the root). Closed when dropped.
+pub struct Socket {
+    ws: web_sys::WebSocket,
+    _on_open: Closure<dyn FnMut(web_sys::Event)>,
+    _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_close: Closure<dyn FnMut(web_sys::CloseEvent)>,
+}
+
+impl Socket {
+    /// `on_open` runs once connected, `on_message` with each text message,
+    /// `on_close` once when it ends or fails (whether it had opened).
+    pub fn open(
+        path: &str,
+        mut on_open: impl FnMut() + 'static,
+        mut on_message: impl FnMut(String) + 'static,
+        mut on_close: impl FnMut(bool) + 'static,
+    ) -> Option<Self> {
+        let base = origin();
+        let url = match base.strip_prefix("https://") {
+            Some(rest) => format!("wss://{rest}{path}"),
+            None => format!("ws://{}{path}", base.strip_prefix("http://").unwrap_or(&base)),
+        };
+        let ws = web_sys::WebSocket::new(&url).ok()?;
+        let opened = std::rc::Rc::new(std::cell::Cell::new(false));
+        let o2 = opened.clone();
+        let on_open = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+            o2.set(true);
+            on_open();
+        });
+        let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            if let Some(s) = e.data().as_string() {
+                on_message(s);
+            }
+        });
+        let on_close = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_: web_sys::CloseEvent| {
+            on_close(opened.get());
+        });
+        ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+        Some(Self { ws, _on_open: on_open, _on_message: on_message, _on_close: on_close })
+    }
+
+    /// Whether it was handed to the browser (false when not open).
+    pub fn send(&self, text: &str) -> bool {
+        self.ws.ready_state() == web_sys::WebSocket::OPEN && self.ws.send_with_str(text).is_ok()
+    }
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        self.ws.set_onopen(None);
+        self.ws.set_onmessage(None);
+        self.ws.set_onclose(None);
+        let _ = self.ws.close();
+    }
+}
+
 pub fn random_uuid() -> String {
     let mut b = [0u8; 16];
     for x in &mut b {

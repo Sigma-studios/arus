@@ -27,6 +27,11 @@ embeds it.
   visible to the admin until the person changes theirs.
 * Two people editing the same choreography: changes merge live; a whole-document
   save that conflicts is offered as a new choreography.
+* Live editing runs over one WebSocket per open editor (`/api/choreographies/{id}/ws`):
+  changes, presence, and dancers being dragged (streamed ~10×/s, never stored).
+  Where a proxy blocks WebSockets the editor falls back to server-sent events
+  plus POSTs. Live changes are kept in memory and written to SQLite at most every
+  2 s, before any other request reads the database, and on shutdown.
 * Phones and tablets are view-only.
 
 The accounts replaced the earlier per-team members: on first start the server

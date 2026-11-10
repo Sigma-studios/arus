@@ -47,10 +47,14 @@ async fn run() -> anyhow::Result<()> {
         config.storage_limit,
         if config.format_key.is_some() { "loaded" } else { "missing" }
     );
-    let app = arrus_server::build(config)?;
+    let state = arrus_server::AppState::open(config)?;
+    let app = arrus_server::app(state.clone());
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("listening on http://{addr}");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
+    let served = axum::serve(listener, app).with_graceful_shutdown(shutdown()).await;
+    // Whatever happened, keep the last live changes.
+    arrus_server::flush(&state).await;
+    served?;
     Ok(())
 }
 

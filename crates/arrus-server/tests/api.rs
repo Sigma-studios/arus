@@ -1174,6 +1174,150 @@ async fn live_patches_merge_and_stream() {
     assert_eq!(next_live(&mut live).await, LiveEvent::Deleted);
 }
 
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn ws_connect(addr: std::net::SocketAddr, path: &str, cookie: &str, origin: &str) -> Result<Ws, StatusCode> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = format!("ws://{addr}{path}").into_client_request().unwrap();
+    req.headers_mut().insert(header::COOKIE, format!("arus_session={cookie}").parse().unwrap());
+    req.headers_mut().insert(header::ORIGIN, origin.parse().unwrap());
+    match tokio_tungstenite::connect_async(req).await {
+        Ok((ws, _)) => Ok(ws),
+        Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(StatusCode::from_u16(r.status().as_u16()).unwrap()),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+async fn ws_next(ws: &mut Ws) -> LiveEvent {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .expect("no live event within 5 s")
+            .expect("socket closed")
+            .unwrap();
+        if let Message::Text(t) = msg {
+            return serde_json::from_str(&t).unwrap_or_else(|e| panic!("{e}: {t}"));
+        }
+    }
+}
+
+async fn ws_send(ws: &mut Ws, req: &LiveRequest) {
+    use futures_util::SinkExt;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::to_string(req).unwrap().into())).await.unwrap();
+}
+
+/// Skip presence lists.
+async fn ws_next_change(ws: &mut Ws) -> LiveEvent {
+    loop {
+        match ws_next(ws).await {
+            LiveEvent::Presence { .. } => continue,
+            e => return e,
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_websocket() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "A").await;
+    let w = t.member(&admin, team.id, "w", true).await;
+    let w = t.login("w", &w.password).await;
+    let r = t.member(&admin, team.id, "r", false).await;
+    let r = t.login("r", &r.password).await;
+    let s: ChoreographySummary = t.create(&w, None, sample()).await.json();
+    let url = format!("/api/choreographies/{}", s.id);
+    let base = serde_json::to_value(t.get(&url, &w).await.json::<ChoreographyDoc>().data).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, t.app.clone()).into_future());
+    let origin = format!("http://{addr}");
+
+    // Other sites' pages may not open it, nor may strangers.
+    assert_eq!(ws_connect(addr, &format!("{url}/ws?session=x"), &w, "https://evil.example").await.err(), Some(StatusCode::FORBIDDEN));
+    assert_eq!(ws_connect(addr, &format!("{url}/ws?session=x"), "nope", &origin).await.err(), Some(StatusCode::UNAUTHORIZED));
+
+    let mut ws_w = ws_connect(addr, &format!("{url}/ws?session=w-1"), &w, &origin).await.unwrap();
+    assert_eq!(ws_next(&mut ws_w).await, LiveEvent::Hello { revision: 1 });
+    let mut ws_r = ws_connect(addr, &format!("{url}/ws?session=r-1"), &r, &origin).await.unwrap();
+    assert_eq!(ws_next(&mut ws_r).await, LiveEvent::Hello { revision: 1 });
+
+    // Presence goes to everyone.
+    ws_send(&mut ws_r, &LiveRequest::Presence { formation: Some(2), selected: vec![1], dragging: false }).await;
+    loop {
+        if let LiveEvent::Presence { viewers } = ws_next(&mut ws_w).await
+            && viewers.iter().any(|v| v.session == "r-1" && v.formation == Some(2))
+        {
+            break;
+        }
+    }
+
+    // A patch: answered, and streamed to everyone.
+    let mut a = base.clone();
+    a["name"] = "Over the socket".into();
+    ws_send(&mut ws_w, &LiveRequest::Patch { batch: 1, ops: patch::diff(&base, &a) }).await;
+    let mut saved = None;
+    let mut echoed = false;
+    while saved.is_none() || !echoed {
+        match ws_next_change(&mut ws_w).await {
+            LiveEvent::Saved { batch: 1, summary } => saved = Some(summary),
+            LiveEvent::Patch { revision: 2, session, .. } if session == "w-1" => echoed = true,
+            e => panic!("{e:?}"),
+        }
+    }
+    let saved = saved.unwrap();
+    assert_eq!((saved.revision, saved.name.as_str(), saved.updated_by.as_str()), (2, "Over the socket", "w"));
+    assert!(matches!(ws_next_change(&mut ws_r).await, LiveEvent::Patch { revision: 2, batch: 1, .. }));
+
+    // Dragged dancers are passed on as they move (not stored).
+    let dancers = vec![MovingDancer { index: 0, x: 1.5, y: -2.0 }];
+    ws_send(&mut ws_w, &LiveRequest::Moving { formation: 1, dancers: dancers.clone() }).await;
+    assert_eq!(
+        ws_next_change(&mut ws_r).await,
+        LiveEvent::Moving { session: "w-1".into(), formation: 1, dancers: dancers.clone() }
+    );
+    // Readers may do neither.
+    ws_send(&mut ws_r, &LiveRequest::Moving { formation: 1, dancers }).await;
+    ws_send(&mut ws_r, &LiveRequest::Patch { batch: 1, ops: patch::diff(&a, &base) }).await;
+    match ws_next_change(&mut ws_r).await {
+        LiveEvent::Refused { batch: 1, status: 403, .. } => {}
+        e => panic!("{e:?}"),
+    }
+
+    // The rest of the server sees the live changes (written before it reads).
+    let doc: ChoreographyDoc = t.get(&url, &w).await.json();
+    assert_eq!((doc.summary.revision, doc.data.name.as_str()), (2, "Over the socket"));
+    let db = rusqlite::Connection::open(t.dir.path().join("arus.db")).unwrap();
+    let (rev, data): (i64, String) =
+        db.query_row("SELECT revision, data FROM choreographies WHERE id = ?1", [s.id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(rev, 2);
+    assert!(data.contains("Over the socket"));
+
+    // A whole-document save afterwards wins, and later patches build on it.
+    let put = SaveChoreography { base_revision: 2, data: doc.data };
+    assert_eq!(t.call(Method::PUT, &url, Some(&w), Some(put)).await.status, StatusCode::OK);
+    assert_eq!(ws_next_change(&mut ws_w).await, LiveEvent::Hello { revision: 3 });
+    let mut b = serde_json::to_value(t.get(&url, &w).await.json::<ChoreographyDoc>().data).unwrap();
+    let before = b.clone();
+    b["formations"][0]["duration"] = 9.0.into();
+    ws_send(&mut ws_w, &LiveRequest::Patch { batch: 2, ops: patch::diff(&before, &b) }).await;
+    loop {
+        match ws_next_change(&mut ws_w).await {
+            LiveEvent::Saved { batch: 2, summary } => {
+                assert_eq!(summary.revision, 4);
+                break;
+            }
+            LiveEvent::Patch { .. } => {}
+            e => panic!("{e:?}"),
+        }
+    }
+    let doc: ChoreographyDoc = t.get(&url, &w).await.json();
+    assert_eq!((doc.summary.revision, doc.data.formations[0].duration, doc.data.name.as_str()), (4, 9.0, "Over the socket"));
+}
+
 #[tokio::test]
 async fn pdf_export() {
     let t = T::new();

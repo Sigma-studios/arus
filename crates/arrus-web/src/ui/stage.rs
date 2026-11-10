@@ -97,7 +97,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let f = ed.cur();
     let editing = ed.can_edit && !ed.playing;
     let phase = ed.phase();
-    let dancers = phase.map(|p| timeline::dancers_in(&ed.doc, p)).unwrap_or_default();
+    let mut dancers = phase.map(|p| timeline::dancers_in(&ed.doc, p)).unwrap_or_default();
+    ed.apply_motion(phase, &mut dancers);
     let shown_props = edit::props_in(&ed.doc, phase);
     let positions: Vec<(usize, P)> = dancers.iter().filter(|d| d.opacity > 0.5).map(|d| (d.index, d.position)).collect();
     let radius = paint::dancer_radius(&ed.doc);
@@ -326,7 +327,8 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let background = ed.bg_tex.as_ref().map(|(_, t)| BgImage { texture: t.id(), size: t.size_vec2() });
     // Redo the display after edits this frame so drags feel immediate.
     let phase = ed.phase();
-    let dancers = phase.map(|p| timeline::dancers_in(&ed.doc, p)).unwrap_or_default();
+    let mut dancers = phase.map(|p| timeline::dancers_in(&ed.doc, p)).unwrap_or_default();
+    ed.apply_motion(phase, &mut dancers);
     let shown_props = edit::props_in(&ed.doc, phase);
     let here = ed.cur();
     let remotes: Vec<paint::Remote> = ed
