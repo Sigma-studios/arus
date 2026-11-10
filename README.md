@@ -88,6 +88,26 @@ ARUS_ADMIN_PASSWORD=dev ARUS_INSECURE_COOKIES=1 ARUS_DATA_DIR=./data \
 | `ARUS_PUBLIC_URL` | | linked from alerts |
 | `ARUS_INSECURE_COOKIES` | | `1` for plain-http local development |
 
+## Windows app
+
+`desktop/` is a small Flutter app that opens the hosted arus
+(`https://arus.online-app.xyz`) in its own window, rendered by Edge WebView2.
+Everything else (accounts, choreographies, music) stays on the server; the
+window keeps its own login under `%APPDATA%`. `arus.exe --url <url>` (or
+`ARUS_URL`) points it at another server, e.g. a local one.
+
+Building needs Flutter, Visual Studio (Build Tools) with the C++ workload, and
+Windows Developer Mode (Flutter plugins use symlinks):
+
+```sh
+cd desktop
+flutter build windows --release
+```
+
+The app is the whole `build/windows/x64/runner/Release` folder (exe, DLLs, `data/`,
+the MSVC runtime included); zip it to hand it out. It needs the WebView2 Runtime,
+which Windows 10/11 already ship.
+
 ## Deploying (facade)
 
 The `Dockerfile` builds the client and the server into one image:
