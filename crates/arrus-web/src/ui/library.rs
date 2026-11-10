@@ -139,12 +139,44 @@ fn delete(app: &mut App, id: ChoreographyId) {
     });
 }
 
+#[derive(Clone, Copy)]
+enum HeaderAction {
+    New,
+    Import,
+    Refresh,
+}
+
+/// The library's buttons (primary first: rightmost on a computer, leftmost on a phone).
+fn header_actions(ui: &mut Ui, writer: bool, full: bool, full_tip: &str, loading: bool) -> Option<HeaderAction> {
+    let mut action = None;
+    if writer {
+        let r = ui.add_enabled_ui(!full, |ui| widgets::primary_button(ui, "+ New")).inner;
+        if r.on_disabled_hover_text(full_tip).clicked() {
+            action = Some(HeaderAction::New);
+        }
+        let r = ui.add_enabled(!full, egui::Button::new("Import…"));
+        if r.on_hover_text("Import .arrus files or an .aubkp backup from the ArrangeUs app")
+            .on_disabled_hover_text(full_tip)
+            .clicked()
+        {
+            action = Some(HeaderAction::Import);
+        }
+    }
+    if ui.button("Refresh").clicked() {
+        action = Some(HeaderAction::Refresh);
+    }
+    if loading {
+        ui.spinner();
+    }
+    action
+}
+
 /// Accounts in no team yet: create one, or how to be added to one.
 fn welcome(app: &mut App, ui: &mut Ui) {
     let Some(me) = app.me.clone() else { return };
     ui.add_space(30.0);
     ui.vertical_centered(|ui| {
-        ui.set_max_width(460.0);
+        widgets::fit_modal(ui, 460.0);
         ui.label(RichText::new(format!("Welcome, {}", me.username)).size(20.0).strong());
         ui.add_space(6.0);
         ui.label(RichText::new("You're not in a team yet.").color(theme::TEXT_WEAK));
@@ -202,41 +234,43 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Choreographies");
-                if let Some(t) = app.team_name() {
-                    ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::TEXT_WEAK));
+            let (team_name, count) = (app.team_name(), app.library.items.len());
+            let loaded = app.library.loaded_for.is_some();
+            let mut actions = None;
+            widgets::screen_header(
+                ui,
+                compact,
+                |ui| {
+                    ui.heading("Choreographies");
+                    // On a phone the team is already in the top bar.
+                    if let Some(t) = team_name.filter(|_| !compact) {
+                        ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::TEXT_WEAK));
+                    }
+                    if let Some(l) = limit
+                        && loaded
+                    {
+                        let color = if full { theme::WARN } else { theme::TEXT_FAINT };
+                        ui.label(RichText::new(format!("{count} of {l} (free plan)")).small().color(color)).on_hover_text(&full_tip);
+                    }
+                },
+                |ui| actions = Some(header_actions(ui, writer, full, &full_tip, app.library.loading)),
+            );
+            match actions.flatten() {
+                Some(HeaderAction::New) => {
+                    app.library.new_dialog = Some(NewDialog { name: String::new(), dancers: 8, busy: false });
                 }
-                if let Some(l) = limit
-                    && app.library.loaded_for.is_some()
-                {
-                    let n = app.library.items.len();
-                    let color = if full { theme::WARN } else { theme::TEXT_FAINT };
-                    ui.label(RichText::new(format!("{n} of {l} (free plan)")).small().color(color)).on_hover_text(&full_tip);
+                Some(HeaderAction::Import) => {
+                    let net = app.net.clone();
+                    web::pick_files(".arrus,.aubkp", true, move |files| {
+                        net.post(move |app: &mut App| import_files(app, files));
+                    });
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if writer {
-                        let r = ui.add_enabled_ui(!full, |ui| widgets::primary_button(ui, "+ New")).inner;
-                        if r.on_disabled_hover_text(&full_tip).clicked() {
-                            app.library.new_dialog = Some(NewDialog { name: String::new(), dancers: 8, busy: false });
-                        }
-                        let r = ui.add_enabled(!full, egui::Button::new("Import…"));
-                        if r.on_hover_text("Import .arrus files or an .aubkp backup from the ArrangeUs app").on_disabled_hover_text(&full_tip).clicked() {
-                            let net = app.net.clone();
-                            web::pick_files(".arrus,.aubkp", true, move |files| {
-                                net.post(move |app: &mut App| import_files(app, files));
-                            });
-                        }
-                    }
-                    if ui.button("Refresh").clicked() {
-                        reload(app);
-                        app.refresh_storage();
-                    }
-                    if app.library.loading {
-                        ui.spinner();
-                    }
-                });
-            });
+                Some(HeaderAction::Refresh) => {
+                    reload(app);
+                    app.refresh_storage();
+                }
+                None => {}
+            }
             ui.add_space(6.0);
             if app.team.is_none() {
                 if app.is_admin() && app.my_teams().is_empty() && app.me.as_ref().is_some_and(|m| m.account_id.is_none()) {
@@ -484,7 +518,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
     if let Some(rep) = &app.library.import {
         let mut close = false;
         let r = egui::Modal::new(egui::Id::unique("import_report")).show(ctx, |ui| {
-            ui.set_max_width(460.0);
+            widgets::fit_modal(ui, 460.0);
             ui.heading("Import");
             ui.add_space(8.0);
             if rep.pending > 0 {

@@ -134,26 +134,35 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Accounts");
-                ui.label(RichText::new(app.accounts.list.len().to_string()).size(18.0).color(theme::TEXT_WEAK));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::primary_button(ui, "+ Create account").clicked() {
-                        app.accounts.create = Some(CreateForm::default());
-                    }
-                    if ui.button("Refresh").clicked() {
-                        load(app);
-                    }
-                    if app.accounts.loading {
+            let count = app.accounts.list.len();
+            let (mut create, mut refresh) = (false, false);
+            let loading = app.accounts.loading;
+            widgets::screen_header(
+                ui,
+                compact,
+                |ui| {
+                    ui.heading("Accounts");
+                    ui.label(RichText::new(count.to_string()).size(18.0).color(theme::TEXT_WEAK));
+                },
+                |ui| {
+                    create = widgets::primary_button(ui, "+ Create account").clicked();
+                    refresh = ui.button("Refresh").clicked();
+                    if loading {
                         ui.spinner();
                     }
-                });
-            });
+                },
+            );
+            if create {
+                app.accounts.create = Some(CreateForm::default());
+            }
+            if refresh {
+                load(app);
+            }
             ui.add_space(6.0);
             ui.add(
                 egui::TextEdit::singleline(&mut app.accounts.search)
                     .hint_text("Search nickname, email or team…")
-                    .desired_width(320.0),
+                    .desired_width(320.0_f32.min(ui.available_width())),
             );
             ui.add_space(8.0);
             let q = app.accounts.search.trim().to_lowercase();

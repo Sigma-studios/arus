@@ -125,6 +125,35 @@ pub fn rename_dialog(ctx: &egui::Context, id: &str, name: &mut String, busy: boo
     }
 }
 
+/// Room a modal's content may take: `wanted`, or less on a narrow screen
+/// (the modal's own margins and a gap to the screen edge taken off).
+pub fn modal_width(ctx: &egui::Context, wanted: f32) -> f32 {
+    let screen = ctx.content_rect().width();
+    wanted.min(screen - 2.0 * 16.0 - 2.0 * 12.0).max(160.0)
+}
+
+/// A modal's content width, kept within the screen.
+pub fn fit_modal(ui: &mut Ui, wanted: f32) {
+    let w = modal_width(ui.ctx(), wanted);
+    ui.set_max_width(w);
+}
+
+/// A screen's title row: the title on the left and actions on the right; on a
+/// phone the actions go on their own row underneath, left to right, and both
+/// rows wrap instead of overlapping.
+pub fn screen_header(ui: &mut Ui, compact: bool, title: impl FnOnce(&mut Ui), actions: impl FnOnce(&mut Ui)) {
+    if compact {
+        ui.horizontal_wrapped(title);
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(actions);
+    } else {
+        ui.horizontal(|ui| {
+            title(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), actions);
+        });
+    }
+}
+
 pub fn dialog(
     ctx: &egui::Context,
     id: &str,
@@ -136,11 +165,14 @@ pub fn dialog(
 ) -> Option<Choice> {
     let mut choice = None;
     let resp = egui::Modal::new(Id::unique(id)).show(ctx, |ui| {
-        ui.set_max_width(440.0);
-        ui.set_min_width(300.0);
+        let w = modal_width(ctx, 440.0);
+        ui.set_max_width(w);
+        ui.set_min_width(w.min(340.0));
         ui.heading(title);
         ui.add_space(8.0);
-        body(ui);
+        // Tall content scrolls; the buttons below stay in view.
+        let max_h = (ctx.content_rect().height() - 180.0).max(160.0);
+        egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, body);
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

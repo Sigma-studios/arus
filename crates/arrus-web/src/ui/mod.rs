@@ -589,7 +589,7 @@ impl App {
             .order(egui::Order::Tooltip)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.set_max_width(480.0);
+                ui.set_max_width(480.0_f32.min(ctx.content_rect().width() - 24.0));
                 for (i, t) in self.toasts.iter().enumerate() {
                     let col = match t.kind {
                         ToastKind::Success => theme::OK,
@@ -623,7 +623,7 @@ impl App {
         if let Some(a) = &self.alert {
             let (title, text) = (a.title.clone(), a.text.clone());
             let r = egui::Modal::new(Id::unique("alert")).show(ctx, |ui| {
-                ui.set_max_width(420.0);
+                widgets::fit_modal(ui, 420.0);
                 ui.heading(title);
                 ui.add_space(8.0);
                 ui.label(text);

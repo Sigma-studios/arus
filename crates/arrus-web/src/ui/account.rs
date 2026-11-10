@@ -65,16 +65,15 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         || !a.new_password.is_empty();
     let valid = changed && !a.current.is_empty() && !pw_mismatch && !pw_short && !a.busy;
     let c = widgets::dialog(ctx, "account_settings", "Account settings", "Save", false, valid, |ui| {
-        ui.set_min_width(340.0);
         egui::Grid::new("account_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
             ui.label("Email");
-            ui.add(egui::TextEdit::singleline(&mut a.email).hint_text("you@example.com").desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut a.email).hint_text("you@example.com").desired_width(200.0));
             ui.end_row();
             ui.label("New password");
-            ui.add(egui::TextEdit::singleline(&mut a.new_password).password(true).hint_text("unchanged").desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut a.new_password).password(true).hint_text("unchanged").desired_width(200.0));
             ui.end_row();
             ui.label("Again");
-            ui.add(egui::TextEdit::singleline(&mut a.new_password2).password(true).desired_width(220.0));
+            ui.add(egui::TextEdit::singleline(&mut a.new_password2).password(true).desired_width(200.0));
             ui.end_row();
         });
         if pw_short {

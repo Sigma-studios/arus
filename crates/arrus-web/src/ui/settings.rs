@@ -182,8 +182,6 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
     let mut do_rename = None;
     let busy = s.saving;
     let c = widgets::dialog(ctx, "user_settings", "Settings", "Done", false, !busy, |ui| {
-        ui.set_min_width(360.0);
-
         widgets::section(ui, "Colours");
         ui.label("Background");
         if let Some(c) = swatches(ui, &BACKGROUNDS, pal.bg) {
@@ -220,15 +218,13 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         }
 
         widgets::section(ui, "Animation");
-        ui.horizontal(|ui| {
-            ui.label("Switching formations");
-            ui.add(
-                egui::Slider::new(&mut draft.glide_secs, 0.0..=MAX_GLIDE_SECS)
-                    .step_by(0.05)
-                    .fixed_decimals(2)
-                    .suffix(" s"),
-            );
-        });
+        ui.label("Switching formations");
+        ui.add(
+            egui::Slider::new(&mut draft.glide_secs, 0.0..=MAX_GLIDE_SECS)
+                .step_by(0.05)
+                .fixed_decimals(2)
+                .suffix(" s"),
+        );
         ui.label(
             RichText::new(if draft.glide_secs <= 0.0 {
                 "No animation: the dancers jump to the next formation."

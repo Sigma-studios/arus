@@ -70,12 +70,23 @@ fn test_alerts(app: &mut App) {
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
+    let compact = app.compact;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(28, 18)))
+        .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
             ui.heading("All teams");
             ui.add_space(10.0);
             ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                if compact {
+                    // Phones: one column.
+                    ui.set_width(ui.available_width());
+                    teams_card(app, ui);
+                    ui.add_space(14.0);
+                    team::card(app, ui);
+                    ui.add_space(14.0);
+                    alerts_card(app, ui);
+                    return;
+                }
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(310.0);
