@@ -54,6 +54,8 @@ pub struct Editor {
     /// while the playhead sits at its hold start (see `edit::phase`), and the
     /// playhead follows it when edits move that start.
     pinned: Option<usize>,
+    /// A manual switch between formations being animated: (from, to, start time).
+    glide: Option<(usize, usize, f64)>,
     pub playing: bool,
     last_tick: Option<f64>,
     pub audio: Option<Audio>,
@@ -153,6 +155,7 @@ impl Editor {
             live,
             t: 0.0,
             pinned: None,
+            glide: None,
             playing: false,
             last_tick: None,
             audio,
@@ -209,6 +212,7 @@ impl Editor {
     pub fn edit(&mut self, key: Option<&str>, f: impl FnOnce(&mut Choreography)) {
         let (doc, bg, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
         self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone(), seq }, key, self.now);
+        self.glide = None;
         f(&mut self.doc);
         self.mark_dirty();
         self.sanitize();
@@ -220,6 +224,7 @@ impl Editor {
         let (doc, bg, seq) = (&self.doc, &self.bg_data, self.live.remote_log.len());
         self.undo.record(|| Snap { doc: doc.clone(), bg: bg.clone(), seq }, None, self.now);
         self.mark_dirty();
+        self.glide = None;
         self.gesture = true;
     }
 
@@ -305,7 +310,36 @@ impl Editor {
 
     /// Where the playhead is (with the formation picked explicitly, if any).
     pub fn phase(&self) -> Option<Phase> {
+        if let Some(p) = self.glide_phase() {
+            return Some(p);
+        }
+        self.playhead_phase()
+    }
+
+    /// The phase at the playhead itself, ignoring any switch animation.
+    pub fn playhead_phase(&self) -> Option<Phase> {
         edit::phase(&self.doc, self.t, self.pinned, self.easing)
+    }
+
+    /// The in-between shown while a manual switch is animating.
+    fn glide_phase(&self) -> Option<Phase> {
+        let (from, to, start) = self.glide?;
+        let n = self.doc.formations.len();
+        if self.playing || from >= n || to >= n || self.pinned != Some(to) {
+            return None;
+        }
+        let k = (self.now - start) / GLIDE_SECS;
+        (k < 1.0).then(|| Phase::Transition { from, to, progress: Easing::InOut.apply(k) })
+    }
+
+    /// Go to formation `i` because the user asked to (list, previous/next),
+    /// moving the dancers there smoothly like the original app does.
+    pub fn switch_to_formation(&mut self, i: usize) {
+        let from = self.cur();
+        self.go_to_formation(i);
+        if from != i && !self.playing {
+            self.glide = Some((from, i, self.now));
+        }
     }
 
     pub fn delete_selection(&mut self) {
@@ -427,6 +461,7 @@ impl Editor {
 
     pub fn seek(&mut self, t: f64) {
         self.pinned = None;
+        self.glide = None;
         self.t = t.clamp(0.0, self.timeline_len().max(0.0));
         if let Some(a) = &self.audio {
             a.seek(self.t);
@@ -469,16 +504,16 @@ impl Editor {
         let f = self.cur();
         let Some(s) = spans.get(f) else { return };
         if self.t > s.hold_start + 0.25 || f == 0 {
-            self.go_to_formation(f);
+            self.switch_to_formation(f);
         } else {
-            self.go_to_formation(f - 1);
+            self.switch_to_formation(f - 1);
         }
     }
 
     pub fn next_formation(&mut self) {
         let f = self.cur();
         if f + 1 < self.doc.formations.len() {
-            self.go_to_formation(f + 1);
+            self.switch_to_formation(f + 1);
         } else {
             let end = self.total();
             self.seek(end);
@@ -619,6 +654,9 @@ pub fn pick_background(ed: &Editor, app: &App) {
 
 // ---- frame ----------------------------------------------------------------
 
+/// How long a manual switch between formations animates.
+const GLIDE_SECS: f64 = 0.45;
+
 pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.now = ui.input(|i| i.time);
     ed.can_edit = ed.may_write;
@@ -629,8 +667,10 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     }
     ed.tick();
     live::sync(ed, app);
-    if ed.playing {
+    if ed.playing || ed.glide_phase().is_some() {
         ui.ctx().request_repaint();
+    } else {
+        ed.glide = None;
     }
     keyboard(ed, app, ui);
     if !ed.playing && !ed.scrubbing {
@@ -1022,7 +1062,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
     });
     if let Some(i) = go {
         ed.pause();
-        ed.go_to_formation(i);
+        ed.switch_to_formation(i);
     }
 
     if ed.can_edit {

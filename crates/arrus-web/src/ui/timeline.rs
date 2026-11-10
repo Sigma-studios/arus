@@ -159,7 +159,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
 }
 
 fn formation_label(ed: &Editor) -> String {
-    match ed.phase() {
+    match ed.playhead_phase() {
         Some(Phase::Transition { from, to, .. }) => format!("Transition {} → {}", from + 1, to + 1),
         Some(Phase::Hold { formation }) => format!("Formation {}", edit::formation_label(&ed.doc, formation)),
         None => String::new(),
