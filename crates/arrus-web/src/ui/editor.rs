@@ -258,15 +258,25 @@ impl Editor {
 
     /// Use a custom image (base64) as the stage background.
     pub fn set_custom_background(&mut self, b64: String) {
+        self.set_image_background(b64, None);
+    }
+
+    /// Use an image (base64) as the stage background, with the given fit
+    /// (or the current one). It covers the stage only, not the backstage.
+    pub fn set_image_background(&mut self, b64: String, fit: Option<&str>) {
         let old = self.doc.stage_background.clone();
+        let aspect = match fit {
+            Some(f) => f.to_owned(),
+            None => old.as_ref().map_or_else(|| "scaleToFit".into(), |b| b.aspect_ratio.clone()),
+        };
         let bg = StageBackground {
             file: Some(StageBackgroundFile {
                 last_selection_timestamp: Some(web::now_secs()),
                 ..Default::default()
             }),
-            aspect_ratio: old.as_ref().map_or_else(|| "scaleToFit".into(), |b| b.aspect_ratio.clone()),
+            aspect_ratio: aspect,
             alpha: old.as_ref().map_or(1.0, |b| b.alpha),
-            is_backstage_separated: old.as_ref().is_some_and(|b| b.is_backstage_separated),
+            is_backstage_separated: true,
             extra: old.map(|b| b.extra).unwrap_or_default(),
         };
         self.set_background(Some(bg), Some(Rc::new(b64)));

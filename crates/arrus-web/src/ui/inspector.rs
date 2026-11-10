@@ -336,6 +336,8 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings, next: &mut bool, next_paths: &mut
 enum BgChoice {
     None,
     Builtin(DefaultStageBackground),
+    /// The three-mats image, stored as a custom image.
+    ThreeMats,
     Custom,
 }
 
@@ -343,6 +345,7 @@ fn bg_label(b: BgChoice) -> &'static str {
     match b {
         BgChoice::None => "None",
         BgChoice::Builtin(d) => paint::builtin_label(d),
+        BgChoice::ThreeMats => paint::THREE_MATS_LABEL,
         BgChoice::Custom => "Custom image",
     }
 }
@@ -478,8 +481,8 @@ fn background(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     widgets::section(ui, "Background");
     let bg = ed.doc.stage_background.clone();
     let builtin = bg.as_ref().and_then(|b| b.file.as_ref()).and_then(|f| f.standard_background_value.as_deref());
-    let current = if ed.bg_data.is_some() {
-        BgChoice::Custom
+    let current = if let Some(data) = &ed.bg_data {
+        if data.trim() == paint::three_mats_b64() { BgChoice::ThreeMats } else { BgChoice::Custom }
     } else if let Some(name) = builtin {
         BgChoice::Builtin(DefaultStageBackground::parse(name))
     } else {
@@ -491,7 +494,8 @@ fn background(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     egui::ComboBox::from_id_salt("bg_choice").width(200.0).selected_text(bg_label(current)).show_ui(ui, |ui| {
         let mut opts = vec![BgChoice::None];
         opts.extend(DefaultStageBackground::ALL.iter().map(|&d| BgChoice::Builtin(d)));
-        if ed.bg_data.is_some() {
+        opts.push(BgChoice::ThreeMats);
+        if current == BgChoice::Custom {
             opts.push(BgChoice::Custom);
         }
         for o in opts {
@@ -514,11 +518,12 @@ fn background(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 }),
                 aspect_ratio: old.as_ref().map_or_else(|| "scaleToFit".into(), |b| b.aspect_ratio.clone()),
                 alpha: old.as_ref().map_or(1.0, |b| b.alpha),
-                is_backstage_separated: old.as_ref().is_some_and(|b| b.is_backstage_separated),
+                is_backstage_separated: true,
                 extra: old.map(|b| b.extra).unwrap_or_default(),
             };
             ed.set_background(Some(b), None);
         }
+        Some(BgChoice::ThreeMats) => ed.set_image_background(paint::three_mats_b64().to_owned(), Some("stretchToFill")),
         _ => {}
     }
     if ui.button("Choose image…").on_hover_text("PNG or JPEG, stored inside the choreography").clicked() {
@@ -533,7 +538,7 @@ fn background(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 key = Some(Some("bgalpha"));
             }
             ui.end_row();
-            if ed.bg_data.is_some() {
+            if current == BgChoice::Custom {
                 ui.label("Fit");
                 let cur = StageAspectRatio::parse(&b.aspect_ratio);
                 let label = |a: StageAspectRatio| match a {
@@ -552,14 +557,9 @@ fn background(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 ui.end_row();
             }
         });
-        if ui
-            .checkbox(&mut nb.is_backstage_separated, "Keep backstage separate")
-            .on_hover_text("Draw the background on the stage only, even when the backstage is shown")
-            .changed()
-        {
-            key = Some(None);
-        }
         if let Some(k) = key {
+            // Backgrounds cover the stage only; tell the phone app the same.
+            nb.is_backstage_separated = true;
             ed.edit(k, |d| d.stage_background = Some(nb));
         }
     }

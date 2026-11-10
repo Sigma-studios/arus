@@ -100,10 +100,10 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     // Floor.
     painter.rect_filled(stage_rect, 2.0, theme::STAGE_FLOOR);
 
-    // Background.
+    // Background: on the stage only, never over the backstage.
     if let Some(bg) = &c.stage_background {
         let alpha = bg.alpha.clamp(0.0, 1.0) as f32;
-        let target = if !bg.is_backstage_separated && backstage_on { drawable } else { stage };
+        let target = stage;
         let builtin = bg.file.as_ref().and_then(|f| f.standard_background_value.as_deref());
         if let Some(img) = s.background {
             paint_image(painter, v, target, img, StageAspectRatio::parse(&bg.aspect_ratio), alpha);
@@ -605,6 +605,36 @@ pub fn builtin_label(b: DefaultStageBackground) -> &'static str {
     }
 }
 
+/// Picker name of the three-mats image (see [`three_mats_b64`]).
+pub const THREE_MATS_LABEL: &str = "3 cheer mats (left to right)";
+
+/// Three cheer mats running left to right, stacked from the back to the
+/// audience, as base64 PNG. The phone app has no such built-in background, so
+/// it is stored as a custom image (stretched over the stage): the phone shows
+/// it too. Made by `tools/three_mats.py`.
+pub fn three_mats_b64() -> &'static str {
+    static B64: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    B64.get_or_init(|| base64(include_bytes!("../assets/three-mats.png")))
+}
+
+/// Standard base64 with padding.
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +665,15 @@ mod tests {
         c.add_dancer(arrus_core::Unit::at(-1.5, 3.0));
         assert_eq!(fit_bounds(&c).min, P::new(-2.0, 0.0));
         assert_eq!(dancer_radius(&c), 0.35);
+    }
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert!(three_mats_b64().starts_with("iVBORw0KGgo"), "a PNG");
     }
 }
