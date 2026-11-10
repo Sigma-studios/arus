@@ -438,6 +438,22 @@ impl Editor {
         self.pinned = Some(i);
     }
 
+    /// After changing formation `i`'s timing, keep the playhead inside its
+    /// hold so the editor does not slide into a neighbouring formation.
+    pub fn stay_on_formation(&mut self, i: usize) {
+        let Some(s) = timeline::spans(&self.doc).get(i).copied() else { return };
+        let t = self.t.clamp(s.hold_start, s.end);
+        if t != self.t {
+            self.t = t;
+            if let Some(a) = &self.audio {
+                a.seek(t);
+            }
+        }
+        if self.cur() != i {
+            self.go_to_formation(i);
+        }
+    }
+
     /// Keep the playhead on the picked formation when edits (a longer
     /// transition into it, someone else's change) move its hold start.
     fn follow_pinned(&mut self) {
@@ -1067,6 +1083,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
                 let mut dur = f.duration;
                 if ui.add(egui::DragValue::new(&mut dur).speed(0.1).range(0.0..=3600.0).max_decimals(2).suffix(" s")).changed() {
                     ed.edit(Some(&format!("fdur{cur}")), |d| d.formations[cur].duration = dur);
+                    ed.stay_on_formation(cur);
                 }
                 ui.end_row();
                 ui.label("Transition in");
@@ -1077,6 +1094,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
                 );
                 if r.on_disabled_hover_text("The first formation has no transition").changed() {
                     ed.edit(Some(&format!("ftr{cur}")), |d| d.formations[cur].transition_duration = tr);
+                    ed.stay_on_formation(cur);
                 }
                 ui.end_row();
             });

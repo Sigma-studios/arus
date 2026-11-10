@@ -258,8 +258,10 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
             }
             let f = &ed.doc.formations[s.formation];
             let stripe = Rect::from_min_max(pos2(hr.left() + 2.0, hr.bottom() - 3.0), pos2(hr.right() - 2.0, hr.bottom() - 1.0));
-            if let Some(c) = f.color {
-                p.rect_filled(stripe, 1.0, theme::argb(c, 0.8));
+            // Formations imported with a colour get a stripe in the accent
+            // (the stored colour is the old app's pink).
+            if f.color.is_some() {
+                p.rect_filled(stripe, 1.0, theme::ACCENT.gamma_multiply(0.8));
             }
             if hr.width() > 18.0 {
                 let mut text = (s.formation + 1).to_string();
