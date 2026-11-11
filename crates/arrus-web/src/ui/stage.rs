@@ -343,6 +343,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
             dragging: v.dragging,
         })
         .collect();
+    let long_moves = ed.long_moves(here);
     let scene = Scene {
         c: &ed.doc,
         view: &view,
@@ -358,6 +359,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
         next_ghosts: ed.show_next,
         next_paths: ed.show_next_paths,
         remotes: &remotes,
+        long_moves: &long_moves,
     };
     paint::paint_stage(&painter, &scene);
 

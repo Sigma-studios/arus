@@ -176,6 +176,10 @@ pub struct UserPrefs {
     /// (0: no animation), up to [`MAX_GLIDE_SECS`].
     #[serde(default = "default_glide_secs")]
     pub glide_secs: f64,
+    /// Warn when a dancer moves farther than this share of the stage (its
+    /// longer side) in one transition; 0..=1, 0: no warning.
+    #[serde(default = "default_long_move_warn")]
+    pub long_move_warn: f64,
 }
 
 pub const DEFAULT_GLIDE_SECS: f64 = 0.45;
@@ -185,16 +189,24 @@ fn default_glide_secs() -> f64 {
     DEFAULT_GLIDE_SECS
 }
 
+pub const DEFAULT_LONG_MOVE_WARN: f64 = 0.5;
+
+fn default_long_move_warn() -> f64 {
+    DEFAULT_LONG_MOVE_WARN
+}
+
 impl Default for UserPrefs {
     fn default() -> Self {
-        Self { background: None, accent: None, glide_secs: DEFAULT_GLIDE_SECS }
+        Self { background: None, accent: None, glide_secs: DEFAULT_GLIDE_SECS, long_move_warn: DEFAULT_LONG_MOVE_WARN }
     }
 }
 
 impl UserPrefs {
-    /// Within range (a NaN or out-of-range animation time is clamped).
+    /// Within range (a NaN or out-of-range value is clamped).
     pub fn cleaned(mut self) -> Self {
         self.glide_secs = if self.glide_secs.is_finite() { self.glide_secs.clamp(0.0, MAX_GLIDE_SECS) } else { DEFAULT_GLIDE_SECS };
+        self.long_move_warn =
+            if self.long_move_warn.is_finite() { self.long_move_warn.clamp(0.0, 1.0) } else { DEFAULT_LONG_MOVE_WARN };
         self
     }
 }

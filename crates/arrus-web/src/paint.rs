@@ -1,6 +1,7 @@
 //! Drawing the stage with an egui [`Painter`]: floor, backstage, built-in or
 //! custom backgrounds, grid, labels, props, dancers, ghosts and paths.
 
+use arrus_core::layout::LongMove;
 use arrus_core::timeline::DancerAt;
 use arrus_core::{Choreography, DancerFillStyle, DefaultStageBackground, Prop, StageAspectRatio};
 use egui::epaint::{Mesh, TextShape, Vertex};
@@ -40,6 +41,8 @@ pub struct Scene<'a> {
     pub next_paths: bool,
     /// Dancers other people (on this formation) have selected or are moving.
     pub remotes: &'a [Remote],
+    /// Dancers moving too far into this formation (flagged unless playing).
+    pub long_moves: &'a [LongMove],
 }
 
 /// Someone else's selection, drawn as a ring in their colour.
@@ -182,6 +185,18 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
         paths(a, b, 0.45, 3.0);
     }
 
+    // Too-long moves into this formation: a red path, whatever the path option.
+    let warn_moves = if s.playing { &[][..] } else { s.long_moves };
+    if let (Some(a), Some(b)) = (prev, current) {
+        for m in warn_moves {
+            let (Some(ua), Some(ub)) = (a.units.get(m.dancer), b.units.get(m.dancer)) else { continue };
+            let (pa, pb) = (v.to_screen(ua.position), v.to_screen(ub.position));
+            let col = theme::ERROR.gamma_multiply(0.85);
+            painter.extend(Shape::dashed_line(&[pa, pb], Stroke::new(2.0, col), 6.0, 4.0));
+            painter.circle_stroke(pa, rpx * 0.6, Stroke::new(1.5, col));
+        }
+    }
+
     // Ghosts (previous) and future (next) formations, faintly.
     let ghost = |units: &[arrus_core::Unit], opacity: f32| {
         for u in units {
@@ -255,6 +270,22 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
             painter.rect_filled(r, 3.0, Color32::from_black_alpha((120.0 * op) as u8));
             painter.galley(r.min + vec2(3.0, 0.0), galley, theme::TEXT.gamma_multiply(op));
         }
+    }
+
+    // Long-move rings and the share of the stage travelled.
+    for m in warn_moves {
+        let Some(d) = s.dancers.iter().find(|d| d.index == m.dancer) else { continue };
+        let c = v.to_screen(d.position);
+        painter.circle_stroke(c, rpx + 3.0, Stroke::new(2.0, theme::ERROR));
+        let galley = painter.layout_no_wrap(
+            format!("⚠ {:.0}%", m.share * 100.0),
+            FontId::proportional(11.0),
+            Color32::WHITE,
+        );
+        let at = c + vec2(-rpx * 0.7 - 2.0, -rpx * 0.7 - 2.0);
+        let rect = Align2::RIGHT_BOTTOM.anchor_size(at, galley.size()).expand2(vec2(3.0, 1.0));
+        painter.rect_filled(rect, 3.0, theme::ERROR);
+        painter.galley(rect.min + vec2(3.0, 1.0), galley, Color32::WHITE);
     }
 
     // Other people's selections: a ring in their colour, their name on the first.

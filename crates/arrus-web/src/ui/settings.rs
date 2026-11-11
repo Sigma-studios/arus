@@ -1,5 +1,5 @@
-//! Personal settings: UI colours, the formation-switch animation, and the
-//! nickname (changeable once a month).
+//! Personal settings: UI colours, the formation-switch animation, the
+//! long-move warning, and the nickname (changeable once a month).
 
 use arrus_api::{MAX_GLIDE_SECS, Me, UpdateMe, UserPrefs};
 use egui::{Color32, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
@@ -230,6 +230,29 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                 "No animation: the dancers jump to the next formation."
             } else {
                 "How long the dancers take to move when you go to another formation by hand."
+            })
+            .small()
+            .color(theme::TEXT_FAINT),
+        );
+
+        widgets::section(ui, "Long moves");
+        ui.label("Warn when a dancer travels more than");
+        let mut pct = (draft.long_move_warn * 100.0).round();
+        if ui
+            .add(
+                egui::Slider::new(&mut pct, 0.0..=100.0)
+                    .step_by(5.0)
+                    .custom_formatter(|v, _| if v <= 0.0 { "Off".into() } else { format!("{v:.0}%") }),
+            )
+            .changed()
+        {
+            draft.long_move_warn = pct / 100.0;
+        }
+        ui.label(
+            RichText::new(if draft.long_move_warn <= 0.0 {
+                "No warning about long moves."
+            } else {
+                "of the stage (its longer side) in one transition. Such moves are marked in red on the stage and the timeline."
             })
             .small()
             .color(theme::TEXT_FAINT),

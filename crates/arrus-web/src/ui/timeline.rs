@@ -159,11 +159,20 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
 }
 
 fn formation_label(ed: &Editor) -> String {
-    match ed.playhead_phase() {
-        Some(Phase::Transition { from, to, .. }) => format!("Transition {} → {}", from + 1, to + 1),
-        Some(Phase::Hold { formation }) => format!("Formation {}", edit::formation_label(&ed.doc, formation)),
-        None => String::new(),
+    let (mut text, to) = match ed.playhead_phase() {
+        Some(Phase::Transition { from, to, .. }) => (format!("Transition {} → {}", from + 1, to + 1), to),
+        Some(Phase::Hold { formation }) => (format!("Formation {}", edit::formation_label(&ed.doc, formation)), formation),
+        None => return String::new(),
+    };
+    let long = ed.long_moves(to);
+    if let Some(far) = long.iter().max_by(|a, b| a.share.total_cmp(&b.share)) {
+        let who = match long.len() {
+            1 => format!("dancer {}", far.dancer + 1),
+            n => format!("{n} dancers"),
+        };
+        text += &format!("  ·  ⚠ {who} moving up to {:.0}% of the stage", far.share * 100.0);
     }
+    text
 }
 
 #[derive(Clone, Copy)]
@@ -233,9 +242,10 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
         let x0 = time_to_x(s.start, len, rect);
         let x1 = time_to_x(s.hold_start, len, rect);
         let x2 = time_to_x(s.end, len, rect);
+        let long = ed.long_moves(s.formation);
         if x1 > x0 + 0.5 {
             let tr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
-            p.rect_filled(tr, 3.0, theme::transition());
+            p.rect_filled(tr, 3.0, if long.is_empty() { theme::transition() } else { theme::ERROR.gamma_multiply(0.45) });
             // Diagonal hatching marks a transition.
             let clip = p.with_clip_rect(tr);
             let mut x = tr.left() - tr.height();
@@ -246,6 +256,16 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
                 );
                 x += 7.0;
             }
+        }
+        // A long move into this formation: a red mark at its start (also for
+        // a 0 s transition).
+        if !long.is_empty() {
+            let c = pos2(x1, inner.top() + 1.0);
+            p.add(egui::Shape::convex_polygon(
+                vec![pos2(c.x - 5.0, c.y - 4.0), pos2(c.x + 5.0, c.y - 4.0), pos2(c.x, c.y + 4.0)],
+                theme::ERROR,
+                Stroke::NONE,
+            ));
         }
         if x2 > x1 + 0.5 {
             let hr = Rect::from_min_max(pos2(x1 + 1.0, inner.top()), pos2(x2 - 1.0, inner.bottom()));

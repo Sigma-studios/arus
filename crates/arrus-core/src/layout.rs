@@ -44,6 +44,37 @@ pub fn stage_area(c: &Choreography) -> Area {
     if s.width() < 1.0 || s.height() < 1.0 { g } else { s }
 }
 
+/// A dancer moving far in one transition (see [`long_moves`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LongMove {
+    pub dancer: usize,
+    /// Distance travelled as a share of the stage's longer side.
+    pub share: f64,
+}
+
+/// Dancers who move farther than `limit` (a share of the stage's longer side,
+/// e.g. 0.5) in the transition into formation `to`. A `limit` of 0 or less
+/// turns the check off; the first formation has no transition.
+pub fn long_moves(c: &Choreography, to: usize, limit: f64) -> Vec<LongMove> {
+    let (Some(a), Some(b)) = (to.checked_sub(1).and_then(|i| c.formations.get(i)), c.formations.get(to)) else {
+        return Vec::new();
+    };
+    if limit.is_nan() || limit <= 0.0 {
+        return Vec::new();
+    }
+    let s = stage_area(c);
+    let side = s.width().max(s.height());
+    a.units
+        .iter()
+        .zip(&b.units)
+        .enumerate()
+        .filter_map(|(dancer, (ua, ub))| {
+            let share = (ub.position.x - ua.position.x).hypot(ub.position.y - ua.position.y) / side;
+            (share > limit + 1e-9).then_some(LongMove { dancer, share })
+        })
+        .collect()
+}
+
 /// Whether the choreography sets up a backstage beyond the app's default
 /// (`sides: 2, back: 0, front: 0`). The ArrangeUs app shows such a backstage
 /// even when `isBackstageShown` is false in the file.
@@ -79,4 +110,30 @@ pub fn shape_outline(shape: DancerShape) -> Option<&'static [(f64, f64)]> {
         BottomLeftTriangle => &[(-0.82, -0.82), (0.82, 0.82), (-0.82, 0.82)],
         BottomRightTriangle => &[(0.82, -0.82), (0.82, 0.82), (-0.82, 0.82)],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Formation, Unit};
+
+    #[test]
+    fn long_moves_are_measured_against_the_longer_side() {
+        // Default stage: 14 x 8 cells, no backstage taken from it.
+        let mut c = Choreography::new("t", "id", 0);
+        c.add_dancer(Unit::at(0.0, 4.0));
+        c.add_dancer(Unit::at(0.0, 0.0));
+        let mut f = Formation::new();
+        f.units = vec![Unit::at(8.0, 4.0), Unit::at(0.0, 6.0)];
+        c.formations.push(f);
+        // Dancer 1 moves 8 of 14 cells (57 %), dancer 2 only 6 / 14.
+        let m = long_moves(&c, 1, 0.5);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].dancer, 0);
+        assert!((m[0].share - 8.0 / 14.0).abs() < 1e-9);
+        assert!(long_moves(&c, 1, 0.6).is_empty());
+        assert!(long_moves(&c, 1, 0.0).is_empty(), "0 turns it off");
+        assert!(long_moves(&c, 0, 0.5).is_empty(), "no transition into the first");
+        assert_eq!(long_moves(&c, 1, 0.3).len(), 2);
+    }
 }

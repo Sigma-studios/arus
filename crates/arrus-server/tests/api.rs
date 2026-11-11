@@ -1383,15 +1383,17 @@ async fn prefs_are_saved_per_person() {
     let ann = t.signup("ann", "ann@example.com", "correct horse").await;
     assert_eq!(t.me(&bob).await.prefs, UserPrefs::default());
 
-    let prefs = UserPrefs { background: Some([10, 20, 30]), accent: Some([200, 100, 50]), glide_secs: 9.0 };
+    let prefs =
+        UserPrefs { background: Some([10, 20, 30]), accent: Some([200, 100, 50]), glide_secs: 9.0, long_move_warn: 3.0 };
     let saved: UserPrefs = t.call(Method::PUT, "/api/me/prefs", Some(&bob), Some(prefs)).await.json();
     assert_eq!(saved.glide_secs, MAX_GLIDE_SECS, "clamped");
+    assert_eq!(saved.long_move_warn, 1.0, "clamped");
     assert_eq!(t.me(&bob).await.prefs, saved);
     assert_eq!(t.me(&ann).await.prefs, UserPrefs::default(), "not shared");
 
     // the master admin (no account row) has them too
     let admin = t.login("admin", ADMIN_PW).await;
-    let prefs = UserPrefs { glide_secs: 0.0, ..Default::default() };
+    let prefs = UserPrefs { glide_secs: 0.0, long_move_warn: 0.35, ..Default::default() };
     assert_eq!(t.call(Method::PUT, "/api/me/prefs", Some(&admin), Some(prefs.clone())).await.status, StatusCode::OK);
     assert_eq!(t.me(&admin).await.prefs, prefs);
 }

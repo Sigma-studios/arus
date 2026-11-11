@@ -60,6 +60,9 @@ pub struct Editor {
     glide: Option<(usize, usize, f64)>,
     /// How long a manual switch between formations animates (the person's setting).
     pub glide_secs: f64,
+    /// Warn about dancers moving farther than this share of the stage in one
+    /// transition (the person's setting; 0: off).
+    pub long_move_warn: f64,
     pub playing: bool,
     last_tick: Option<f64>,
     pub audio: Option<Audio>,
@@ -162,6 +165,7 @@ impl Editor {
             pinned: None,
             glide: None,
             glide_secs: arrus_api::DEFAULT_GLIDE_SECS,
+            long_move_warn: arrus_api::DEFAULT_LONG_MOVE_WARN,
             playing: false,
             last_tick: None,
             audio,
@@ -320,6 +324,11 @@ impl Editor {
     }
 
     /// Formation edits apply to (the one held or being entered).
+    /// Dancers moving too far in the transition into formation `to`.
+    pub fn long_moves(&self, to: usize) -> Vec<arrus_core::layout::LongMove> {
+        arrus_core::layout::long_moves(&self.doc, to, self.long_move_warn)
+    }
+
     pub fn cur(&self) -> usize {
         edit::formation_at(&self.doc, self.t, self.pinned)
     }
@@ -675,6 +684,10 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     ed.now = ui.input(|i| i.time);
     if let Some(me) = &app.me {
         ed.glide_secs = me.prefs.glide_secs;
+    }
+    // The settings dialog's draft, so moving the slider shows at once.
+    if let Some(p) = super::settings::current_prefs(app) {
+        ed.long_move_warn = p.long_move_warn;
     }
     ed.can_edit = ed.may_write;
     ed.touch = app.touch;
