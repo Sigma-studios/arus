@@ -189,7 +189,7 @@ fn default_glide_secs() -> f64 {
     DEFAULT_GLIDE_SECS
 }
 
-pub const DEFAULT_LONG_MOVE_WARN: f64 = 0.5;
+pub const DEFAULT_LONG_MOVE_WARN: f64 = 0.0;
 
 fn default_long_move_warn() -> f64 {
     DEFAULT_LONG_MOVE_WARN
