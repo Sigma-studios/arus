@@ -3,7 +3,6 @@
 mod account;
 mod accounts;
 mod admin;
-mod confirm;
 mod download;
 mod editor;
 mod inspector;
@@ -87,8 +86,6 @@ pub struct App {
     pub settings: settings::SettingsUi,
     /// Whether the server hands out a newer client (a deploy happened).
     pub update: update::UpdateWatch,
-    /// "Please confirm your email".
-    pub confirm: confirm::ConfirmUi,
     /// "New team" dialog: the name typed, and whether it is being created.
     new_team: Option<(String, bool)>,
     pub editor: Option<Box<editor::Editor>>,
@@ -125,7 +122,6 @@ impl App {
             account: Default::default(),
             settings: Default::default(),
             update: Default::default(),
-            confirm: Default::default(),
             new_team: None,
             editor: None,
             opening: None,
@@ -743,9 +739,6 @@ impl eframe::App for App {
             self.top_bar(ui);
         }
         update::bar(self, ui);
-        if !in_phone_editor {
-            confirm::bar(self, ui);
-        }
         match self.screen {
             Screen::Library => library::show(self, ui),
             Screen::Team => team::show(self, ui),

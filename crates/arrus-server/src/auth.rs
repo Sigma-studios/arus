@@ -144,8 +144,7 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-/// 32 random bytes as hex: session and email-link tokens.
-pub fn new_token() -> String {
+fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes);
     hex::encode(bytes)

@@ -11,7 +11,6 @@ use rust_embed::Embed;
 use serde::Deserialize;
 
 use crate::auth::{self, Auth, User};
-use crate::email;
 use crate::error::{Error, Result};
 use crate::routes::{accounts, teams};
 use crate::AppState;
@@ -72,13 +71,7 @@ pub async fn login_page(
     } else {
         ""
     };
-    let forgot = if state.mailer.is_some() {
-        r#"<p class="hint"><a href="/forgot">Forgot your password?</a></p>"#
-    } else {
-        ""
-    };
     let page = LOGIN_HTML
-        .replace("{{forgot}}", forgot)
         .replace("{{error}}", error)
         .replace("{{next}}", &esc(next.as_deref().unwrap_or("")))
         .replace("{{signup}}", &esc(&with_next("/signup", next.as_deref())));
@@ -182,11 +175,9 @@ pub async fn signup_submit(State(state): State<AppState>, Form(form): Form<Signu
     }
     let password = form.password.clone();
     let created = state
-        .db(move |s, conn| {
+        .db(move |_, conn| {
             let id = accounts::insert_account(conn, &nickname, Some(&email), &password, false)?;
-            let token = auth::create_session(conn, Some(id))?;
-            email::send(s, conn, id, email::Kind::Confirm)?;
-            Ok(token)
+            Ok(auth::create_session(conn, Some(id))?)
         })
         .await;
     match created {
@@ -242,169 +233,6 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result
     let mut r = redirect("/login");
     auth::set_cookie(r.headers_mut(), auth::clear_cookie(&state));
     Ok(r)
-}
-
-// ---- links sent by email ---------------------------------------------------
-
-/// A small page in the login style.
-fn page(title: &str, inner: &str) -> Response {
-    let html = PAGE_HTML.replace("{{title}}", &esc(title)).replace("{{inner}}", inner);
-    no_store(Html(html).into_response())
-}
-
-const LINK_EXPIRED: &str = r#"<p class="sub">This link does not work anymore: it was already used, it expired,
-  or the account's email changed since.</p>
-  <p class="alt"><a href="/forgot">Get a new password link</a> · <a href="/">Open Eightcount</a></p>"#;
-
-pub async fn forgot_page(State(state): State<AppState>) -> Result<Response> {
-    if state.mailer.is_none() {
-        return Ok(page(
-            "Forgot your password",
-            r#"<p class="sub">Ask the person who runs this Eightcount to set a new password for you.</p>
-  <p class="alt"><a href="/login">Back to log in</a></p>"#,
-        ));
-    }
-    Ok(page("Forgot your password", FORGOT_FORM))
-}
-
-const FORGOT_FORM: &str = r#"<p class="sub">Enter your account's email. We'll send you a link to choose a new
-  password, and remind you of your nickname.</p>
-  <form method="post" action="/forgot">
-    <label for="email">Email</label>
-    <input id="email" name="email" type="email" autocomplete="email" required autofocus>
-    <button type="submit">Send the link</button>
-  </form>
-  <p class="alt"><a href="/login">Back to log in</a></p>"#;
-
-#[derive(Deserialize)]
-pub struct ForgotForm {
-    #[serde(default)]
-    email: String,
-}
-
-/// Always the same answer (and about the same time), whether or not an
-/// account uses the address: the page tells nobody who has an account.
-pub async fn forgot_submit(State(state): State<AppState>, Form(form): Form<ForgotForm>) -> Result<Response> {
-    let typed = form.email.trim().to_string();
-    if state.mailer.is_some() && !typed.is_empty() {
-        let lookup = typed.clone();
-        state
-            .db(move |s, conn| {
-                if let Some(id) = email::account_by_email(conn, &lookup)? {
-                    email::send(s, conn, id, email::Kind::Reset)?;
-                }
-                Ok(())
-            })
-            .await?;
-    }
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    Ok(page(
-        "Check your email",
-        &format!(
-            r#"<p class="sub">If an Eightcount account uses <b>{}</b>, a link to choose a new password is on
-  its way. It works for 1 hour.</p>
-  <p class="hint">Nothing after a few minutes? Check your spam folder, or try again.</p>
-  <p class="alt"><a href="/login">Back to log in</a></p>"#,
-            esc(&typed)
-        ),
-    ))
-}
-
-fn reset_form(nickname: &str, token: &str, error: Option<&str>) -> String {
-    let error = error.map(|e| format!(r#"<p class="error" role="alert">{}</p>"#, esc(e))).unwrap_or_default();
-    format!(
-        r#"<p class="sub">Choose a new password for <b>{nick}</b>.</p>
-  {error}
-  <form method="post" action="/reset-password/{token}">
-    <input type="text" name="username" value="{nick}" autocomplete="username" hidden>
-    <label for="password">New password</label>
-    <input id="password" name="password" type="password" autocomplete="new-password" minlength="{min}" required autofocus>
-    <label for="password2">Again</label>
-    <input id="password2" name="password2" type="password" autocomplete="new-password" minlength="{min}" required>
-    <button type="submit">Save and log in</button>
-  </form>
-  <p class="hint">You will be logged out on your other devices.</p>"#,
-        nick = esc(nickname),
-        token = esc(token),
-        min = arrus_api::MIN_PASSWORD_LEN,
-    )
-}
-
-pub async fn reset_page(State(state): State<AppState>, Path(token): Path<String>) -> Result<Response> {
-    let t = token.clone();
-    let found = state.db(move |_, conn| email::find(conn, &t, email::Kind::Reset)).await?;
-    Ok(match found {
-        Some((_, nickname)) => page("New password", &reset_form(&nickname, &token, None)),
-        None => page("Link expired", LINK_EXPIRED),
-    })
-}
-
-#[derive(Deserialize)]
-pub struct ResetForm {
-    #[serde(default)]
-    password: String,
-    #[serde(default)]
-    password2: String,
-}
-
-pub async fn reset_submit(
-    State(state): State<AppState>,
-    Path(token): Path<String>,
-    Form(form): Form<ResetForm>,
-) -> Result<Response> {
-    let t = token.clone();
-    let found = state.db(move |_, conn| email::find(conn, &t, email::Kind::Reset)).await?;
-    let Some((id, nickname)) = found else { return Ok(page("Link expired", LINK_EXPIRED)) };
-    let problem = match accounts::check_new_password(&form.password) {
-        Err(e) => Some(message(&e)),
-        Ok(()) if form.password != form.password2 => Some("The two passwords are different.".to_string()),
-        Ok(()) => None,
-    };
-    if let Some(p) = problem {
-        let mut r = page("New password", &reset_form(&nickname, &token, Some(&p)));
-        *r.status_mut() = StatusCode::BAD_REQUEST;
-        return Ok(r);
-    }
-    let password = form.password;
-    let session = state
-        .db(move |_, conn| {
-            let tx = conn.transaction()?;
-            tx.execute(
-                "UPDATE accounts SET password_hash = ?1, password_visible = NULL,                  email_verified_at = COALESCE(email_verified_at, ?2) WHERE id = ?3",
-                rusqlite::params![auth::hash_password(&password), crate::db::now(), id],
-            )?;
-            // Whoever had the old password is out.
-            tx.execute("DELETE FROM sessions WHERE account_id = ?1", [id])?;
-            email::spend(&tx, id, email::Kind::Reset)?;
-            let token = auth::create_session(&tx, Some(id))?;
-            tx.commit()?;
-            Ok(token)
-        })
-        .await?;
-    let mut r = redirect("/");
-    auth::set_cookie(r.headers_mut(), auth::session_cookie(&state, &session));
-    Ok(r)
-}
-
-pub async fn confirm_email_page(State(state): State<AppState>, Path(token): Path<String>) -> Result<Response> {
-    let done = state.db(move |_, conn| email::confirm(conn, &token)).await?;
-    Ok(match done {
-        Some(nickname) => page(
-            "Email confirmed",
-            &format!(
-                r#"<p class="sub">Thanks, {}: your email is confirmed. If you ever forget your password, you can
-  get back into your account with it.</p>
-  <p class="alt"><a href="/">Open Eightcount</a></p>"#,
-                esc(&nickname)
-            ),
-        ),
-        None => page(
-            "Link expired",
-            r#"<p class="sub">This link does not work anymore: it was already used, it expired, or the
-  account's email changed since. Open Eightcount to get a new one.</p>
-  <p class="alt"><a href="/">Open Eightcount</a></p>"#,
-        ),
-    })
 }
 
 pub async fn healthz() -> &'static str {
@@ -530,51 +358,9 @@ const LOGIN_HTML: &str = r#"<!doctype html>
            autocorrect="off" spellcheck="false" required autofocus>
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
-    {{forgot}}
     <button type="submit">Log in</button>
   </form>
   <p class="alt">No account yet? <a href="{{signup}}">Sign up</a></p>
-</main>
-</body>
-</html>
-"#;
-
-/// The login page's look for the small pages around it (`{{title}}`, `{{inner}}`).
-const PAGE_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<meta name="referrer" content="no-referrer">
-<title>Eightcount · {{title}}</title>
-<style>
-  *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0c;color:#e8e8eb;
-       font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  main{width:min(380px,92vw);background:#1a1a1d;border:1px solid #2c2c31;border-radius:14px;padding:32px 28px;
-       box-shadow:0 10px 40px rgba(0,0,0,.45)}
-  h1{margin:0 0 4px;font-size:28px;letter-spacing:.04em;color:#9266f8}
-  h2{margin:0 0 10px;font-size:18px}
-  p.sub{margin:0 0 20px;color:#a0a0a8;font-size:14px}
-  label{display:block;font-size:13px;color:#a0a0a8;margin:14px 0 6px}
-  input{width:100%;padding:11px 12px;border-radius:8px;border:1px solid #34343a;background:#121214;color:#e8e8eb;font-size:16px}
-  input:focus{outline:none;border-color:#9266f8;box-shadow:0 0 0 3px rgba(146,102,248,.25)}
-  button{margin-top:22px;width:100%;padding:12px;border:0;border-radius:8px;background:#7c4ff0;color:#fff;
-         font-size:16px;font-weight:600;cursor:pointer}
-  button:hover{background:#9266f8}
-  .error{margin:0 0 8px;padding:10px 12px;border-radius:8px;background:rgba(240,82,82,.12);
-         border:1px solid rgba(240,82,82,.45);color:#ffb8b8;font-size:14px}
-  p.alt{margin:18px 0 0;text-align:center;color:#a0a0a8;font-size:14px}
-  p.hint{margin:8px 0 0;color:#707078;font-size:12px}
-  a{color:#b394ff}
-</style>
-</head>
-<body>
-<main>
-  <h1>Eightcount</h1>
-  <h2>{{title}}</h2>
-  {{inner}}
 </main>
 </body>
 </html>

@@ -17,7 +17,6 @@ const ADMIN_PW: &str = "s3cret admin pw";
 
 struct T {
     app: Router,
-    state: AppState,
     dir: tempfile::TempDir,
 }
 
@@ -53,7 +52,6 @@ fn config(dir: &std::path::Path, limit: u64) -> Config {
         insecure_cookies: false,
         dev_autologin: false,
         public_url: None,
-        mail: None,
     }
 }
 
@@ -65,9 +63,8 @@ impl T {
         let dir = tempfile::tempdir().unwrap();
         let mut c = config(dir.path(), 1024 * 1024 * 1024);
         f(&mut c);
-        let state = AppState::open(c).unwrap();
-        let app = app(state.clone());
-        Self { app, state, dir }
+        let app = app(AppState::open(c).unwrap());
+        Self { app, dir }
     }
 
     async fn send(&self, req: Request<Body>) -> Resp {
@@ -1055,8 +1052,8 @@ async fn alert_settings() {
     assert!(!String::from_utf8_lossy(&t.get("/api/settings/alerts", &admin).await.body).contains("token-abcd"));
 
     // survives a restart
-    let state = AppState::open(config(t.dir.path(), 1024 * 1024 * 1024)).unwrap();
-    let t2 = T { app: app(state.clone()), state, dir: tempfile::tempdir().unwrap() };
+    let again = app(AppState::open(config(t.dir.path(), 1024 * 1024 * 1024)).unwrap());
+    let t2 = T { app: again, dir: tempfile::tempdir().unwrap() };
     let admin2 = t2.admin().await;
     let s2: AlertSettings = t2.get("/api/settings/alerts", &admin2).await.json();
     assert_eq!(s2.mention, "@here <@&42>");
@@ -1407,155 +1404,4 @@ async fn prefs_are_saved_per_person() {
     let prefs = UserPrefs { glide_secs: 0.0, long_move_warn: 0.35, ..Default::default() };
     assert_eq!(t.call(Method::PUT, "/api/me/prefs", Some(&admin), Some(prefs.clone())).await.status, StatusCode::OK);
     assert_eq!(t.me(&admin).await.prefs, prefs);
-}
-
-// ---- emails -----------------------------------------------------------------
-
-impl T {
-    fn with_mail() -> Self {
-        Self::with(|c| c.mail = Some(arrus_server::config::Mail::memory()))
-    }
-
-    fn outbox(&self) -> Vec<arrus_server::mail::Mail> {
-        self.state.mailer.as_ref().unwrap().outbox()
-    }
-
-    /// The path of the link in the last email to `to`.
-    fn last_link(&self, to: &str) -> String {
-        let mail = self.outbox().into_iter().rev().find(|m| m.to == to).expect("no mail to that address");
-        let line = mail.text.lines().find(|l| l.starts_with('/') || l.starts_with("http")).unwrap();
-        line.trim().to_string()
-    }
-
-    async fn form(&self, uri: &str, body: &str) -> Resp {
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(Body::from(body.to_string()))
-            .unwrap();
-        self.send(req).await
-    }
-
-    async fn page(&self, uri: &str) -> Resp {
-        self.send(Request::get(uri).body(Body::empty()).unwrap()).await
-    }
-
-    /// Pretend the last email of `kind` to the account was sent long ago.
-    fn age_tokens(&self) {
-        let conn = rusqlite::Connection::open(self.dir.path().join("arus.db")).unwrap();
-        conn.execute("UPDATE email_tokens SET created_at = created_at - 3600", []).unwrap();
-    }
-}
-
-#[tokio::test]
-async fn signup_sends_a_confirm_link() {
-    let t = T::with_mail();
-    let bob = t.signup("bob", "Bob@Example.com", "correct horse").await;
-    let me = t.me(&bob).await;
-    assert!(me.mail && !me.email_verified && me.confirm_sent);
-    let mails = t.outbox();
-    assert_eq!(mails.len(), 1);
-    assert_eq!(mails[0].to, "Bob@Example.com");
-    assert!(mails[0].subject.contains("Confirm"));
-    let link = t.last_link("Bob@Example.com");
-    assert!(link.starts_with("/confirm-email/"), "{link}");
-
-    // asking again right away is refused
-    let r = t.call(Method::POST, "/api/me/confirm-email", Some(&bob), None::<()>).await;
-    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(r.error().code.as_deref(), Some("too_soon"));
-
-    let r = t.page(&link).await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(r.text().contains("Email confirmed"), "{}", r.text());
-    let me = t.me(&bob).await;
-    assert!(me.email_verified && !me.confirm_sent);
-    // a link works once
-    assert!(t.page(&link).await.text().contains("Link expired"));
-    assert!(t.page("/confirm-email/nonsense").await.text().contains("Link expired"));
-}
-
-#[tokio::test]
-async fn changing_the_email_needs_a_new_confirmation() {
-    let t = T::with_mail();
-    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
-    let old_link = t.last_link("bob@example.com");
-    t.age_tokens();
-    let body = UpdateMe { current_password: "correct horse".into(), email: Some("new@example.com".into()), ..Default::default() };
-    let me: Me = t.call(Method::PATCH, "/api/me", Some(&bob), Some(body)).await.json();
-    assert_eq!(me.email.as_deref(), Some("new@example.com"));
-    assert!(!me.email_verified);
-    // the old address's link no longer confirms anything
-    assert!(t.page(&old_link).await.text().contains("Link expired"));
-    let link = t.last_link("new@example.com");
-    assert!(t.page(&link).await.text().contains("Email confirmed"));
-    assert!(t.me(&bob).await.email_verified);
-    // the same address again (other case): still confirmed, no new mail
-    let n = t.outbox().len();
-    let body = UpdateMe { current_password: "correct horse".into(), email: Some("NEW@example.com".into()), ..Default::default() };
-    let me: Me = t.call(Method::PATCH, "/api/me", Some(&bob), Some(body)).await.json();
-    assert!(me.email_verified);
-    assert_eq!(t.outbox().len(), n);
-}
-
-#[tokio::test]
-async fn forgotten_password_by_email() {
-    let t = T::with_mail();
-    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
-    t.age_tokens();
-    let n = t.outbox().len();
-
-    // unknown address: the same answer, no mail
-    let r = t.form("/forgot", "email=nobody%40example.com").await;
-    assert_eq!(r.status, StatusCode::OK);
-    assert!(r.text().contains("Check your email"));
-    assert_eq!(t.outbox().len(), n);
-
-    let r = t.form("/forgot", "email=BOB%40example.com").await;
-    assert!(r.text().contains("Check your email"));
-    let mail = t.outbox().pop().unwrap();
-    assert!(mail.subject.contains("Reset"));
-    assert!(mail.text.contains("Your nickname is bob"), "{}", mail.text);
-    let link = t.last_link("bob@example.com");
-    assert!(link.starts_with("/reset-password/"));
-    // only one per minute
-    t.form("/forgot", "email=bob%40example.com").await;
-    assert_eq!(t.outbox().len(), n + 1);
-
-    let r = t.page(&link).await;
-    assert!(r.text().contains("Choose a new password for <b>bob</b>"), "{}", r.text());
-    let r = t.form(&link, "password=brand+new+pw&password2=other+pw+x").await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    assert!(r.text().contains("different"));
-    let r = t.form(&link, "password=short&password2=short").await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-
-    let r = t.form(&link, "password=brand+new+pw&password2=brand+new+pw").await;
-    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/"));
-    let fresh = cookie_of(&r);
-    assert_eq!(t.me(&fresh).await.username, "bob");
-    // opening the link proved the address
-    assert!(t.me(&fresh).await.email_verified);
-    // the old session is gone, the old password too
-    assert_eq!(t.get("/api/me", &bob).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(t.login_resp("bob", "correct horse").await.location(), "/login?error=1");
-    t.login("bob@example.com", "brand new pw").await;
-    // the link is used up
-    assert!(t.page(&link).await.text().contains("Link expired"));
-    assert!(t.form(&link, "password=again+new+pw&password2=again+new+pw").await.text().contains("Link expired"));
-}
-
-#[tokio::test]
-async fn without_mail_settings_nothing_is_sent() {
-    let t = T::new();
-    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
-    let me = t.me(&bob).await;
-    assert!(!me.mail);
-    let r = t.call(Method::POST, "/api/me/confirm-email", Some(&bob), None::<()>).await;
-    assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(t.page("/forgot").await.text().contains("Ask the person"));
-    assert!(!t.page("/login").await.text().contains("Forgot your password"));
-    // with mail on, the login page offers it
-    assert!(T::with_mail().page("/login").await.text().contains("Forgot your password"));
 }
