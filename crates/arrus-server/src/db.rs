@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS teams (
 );
 CREATE INDEX IF NOT EXISTS team_members_account ON team_members(account_id);
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
+-- Links sent by email (see email.rs); the token itself is never stored.
+CREATE TABLE IF NOT EXISTS email_tokens (
+    token_hash   TEXT PRIMARY KEY,
+    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    -- confirm | reset
+    kind         TEXT NOT NULL,
+    -- the address it was sent to: it only works while the account has it
+    email_lower  TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_tokens_account ON email_tokens(account_id, kind);
 CREATE TABLE IF NOT EXISTS team_invites (
     token       TEXT PRIMARY KEY,
     team_id     INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -110,6 +122,8 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA)?;
     add_column(conn, "accounts", "nickname_changed_at", "INTEGER")?;
     add_column(conn, "accounts", "prefs", "TEXT")?;
+    // unix seconds when the current email was confirmed (NULL: not yet)
+    add_column(conn, "accounts", "email_verified_at", "INTEGER")?;
     conn.pragma_update(None, "foreign_keys", "ON")
 }
 

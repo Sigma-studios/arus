@@ -88,7 +88,11 @@ ARUS_ADMIN_PASSWORD=dev ARUS_INSECURE_COOKIES=1 ARUS_DATA_DIR=./data \
 | `ARUS_DATA_DIR` | `./data` | SQLite database and music files |
 | `ARUS_PORT` | `8080` | |
 | `ARUS_STORAGE_LIMIT_BYTES` | 5 GiB | |
-| `ARUS_PUBLIC_URL` | | linked from alerts |
+| `ARUS_PUBLIC_URL` | | linked from alerts and emails (needed for emails) |
+| `ARUS_BREVO_API_KEY` | | turns emails on (with `ARUS_MAIL_FROM`): confirm the address at sign-up, reset a forgotten password; sent through [Brevo](https://www.brevo.com)'s API |
+| `ARUS_MAIL_FROM` | | sender address, e.g. `no-reply@online-app.xyz` (its domain verified in Brevo) |
+| `ARUS_MAIL_FROM_NAME` | `Eightcount` | sender name |
+| `ARUS_MAIL_REPLY_TO` | | where replies go (the sender address is not read) |
 | `ARUS_INSECURE_COOKIES` | | `1` for plain-http local development |
 
 ## Apps (Windows, macOS, Linux, Android, iOS)
@@ -140,6 +144,8 @@ facade app create arus --git https://github.com/Sigma-studios/arus \
 facade env set arus ARUS_ADMIN_PASSWORD     # prompts; sensitive
 facade env set arus ARUS_FORMAT_KEY
 facade env set arus --public ARUS_PUBLIC_URL=https://arus.online-app.xyz
+facade env set arus ARUS_BREVO_API_KEY        # prompts; sensitive (optional: emails)
+facade env set arus --public ARUS_MAIL_FROM=no-reply@online-app.xyz
 facade deploy arus
 ```
 

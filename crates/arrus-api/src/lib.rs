@@ -16,12 +16,18 @@
 //! | POST | `/login` | form `username` (nickname or email), `password`, `next` | 303 to `next` or `/` (or back to `/login?error=1`) | anyone |
 //! | GET  | `/signup?next=` | | HTML sign-up form | anyone |
 //! | POST | `/signup` | form `nickname`, `email`, `password`, `password2`, `next` | 303 to `next` or `/`, logged in; or the form again with an error | anyone |
+//! | GET  | `/forgot` | | HTML form: email for a reset link | anyone |
+//! | POST | `/forgot` | form `email` | HTML "sent if it exists" (same answer either way) | anyone |
+//! | GET  | `/reset-password/{token}` | | HTML new-password form (or "link expired") | anyone |
+//! | POST | `/reset-password/{token}` | form `password`, `password2` | 303 to `/`, logged in; other sessions end | anyone |
+//! | GET  | `/confirm-email/{token}` | | HTML "email confirmed" (or "link expired") | anyone |
 //! | GET  | `/join/{token}` | | joins the team, 303 to `/#team={id}` (to `/login?next=…` when logged out) | anyone |
 //! | POST | `/logout` | | 303 to `/login` | logged in |
 //! | GET  | `/healthz` | | `ok` | anyone |
 //! | GET  | `/api/version` | | [`Version`] | anyone |
 //! | GET  | `/api/me` | | [`Me`] | logged in |
 //! | PATCH | `/api/me` | [`UpdateMe`] | [`Me`]; 403 `wrong_password`, 429 `nickname_too_soon` | accounts |
+//! | POST | `/api/me/confirm-email` | | 204 once the link is on its way; 400 `no_email`, 429 `too_soon`, 503 `mail_off` | accounts |
 //! | PUT  | `/api/me/prefs` | [`UserPrefs`] | [`UserPrefs`] (cleaned) | logged in |
 //! | GET  | `/api/storage` | | [`Storage`] | logged in (per-team breakdown for admin only) |
 //! | GET  | `/api/teams` | | `Vec<Team>`: all teams | admin |
@@ -148,6 +154,12 @@ pub struct Me {
     /// `None` for the master admin.
     pub account_id: Option<AccountId>,
     pub email: Option<String>,
+    /// The email was confirmed (by the link sent to it).
+    #[serde(default)]
+    pub email_verified: bool,
+    /// The server sends emails (confirm links, password resets).
+    #[serde(default)]
+    pub mail: bool,
     pub premium: bool,
     /// The teams this account is in.
     pub teams: Vec<MyTeam>,

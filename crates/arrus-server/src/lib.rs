@@ -5,9 +5,11 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod docs;
+pub mod email;
 pub mod error;
 pub mod healthcheck;
 pub mod live;
+pub mod mail;
 pub mod routes;
 pub mod storage;
 pub mod web;
@@ -30,6 +32,8 @@ pub struct Inner {
     pub config: Config,
     pub music_dir: PathBuf,
     pub notifier: alerts::Notifier,
+    /// `None`: the server sends no emails (see [`Config::mail`]).
+    pub mailer: Option<mail::Mailer>,
     /// Who has which choreography open, for live co-editing.
     pub hub: live::Hub,
     db: Mutex<Connection>,
@@ -56,7 +60,12 @@ impl AppState {
         conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [db::now()])?;
         // The Discord webhook is set by the admin in the web UI.
         let notifier = alerts::Notifier::new(alerts::Discord::load(&conn)?, config.public_url.clone());
+        let mailer = config.mail.clone().map(mail::Mailer::new);
+        if mailer.is_none() {
+            tracing::info!("emails are off (no ARUS_BREVO_API_KEY / ARUS_MAIL_FROM)");
+        }
         let state = AppState(Arc::new(Inner {
+            mailer,
             config,
             music_dir,
             notifier,
