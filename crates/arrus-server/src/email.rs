@@ -104,6 +104,17 @@ pub fn find(conn: &Connection, token: &str, kind: Kind) -> Result<Option<(i64, S
     Ok(row.filter(|(_, _, exp)| *exp >= db::now()).map(|(id, nick, _)| (id, nick)))
 }
 
+/// Whether a link of `kind` sent to the account's current address still works.
+pub fn pending(conn: &Connection, account_id: i64, kind: Kind) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM email_tokens t JOIN accounts a ON a.id = t.account_id \
+         WHERE t.account_id = ?1 AND t.kind = ?2 AND t.expires_at >= ?3 AND a.email_lower = t.email_lower",
+        params![account_id, kind.as_str(), db::now()],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 /// Use up every link of `kind` sent to the account.
 pub fn spend(conn: &Connection, account_id: i64, kind: Kind) -> Result<()> {
     conn.execute("DELETE FROM email_tokens WHERE account_id = ?1 AND kind = ?2", params![account_id, kind.as_str()])?;

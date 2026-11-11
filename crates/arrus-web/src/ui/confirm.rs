@@ -31,6 +31,9 @@ pub fn send(app: &mut App) {
                 Ok(()) => {
                     let to = app.me.as_ref().and_then(|m| m.email.clone()).unwrap_or_default();
                     app.toast(format!("Sent to {to}: open the link in it"));
+                    if let Some(m) = &mut app.me {
+                        m.confirm_sent = true;
+                    }
                 }
                 Err(net::ApiError::Unauthorized) => web::navigate("/login"),
                 Err(e) => app.toast_error(e.to_string()),
@@ -53,6 +56,7 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
         return;
     }
     let email = app.me.as_ref().and_then(|m| m.email.clone()).unwrap_or_default();
+    let sent = app.me.as_ref().is_some_and(|m| m.confirm_sent);
     let compact = app.compact;
     let mut send_now = false;
     egui::Panel::top("confirm_bar")
@@ -64,7 +68,14 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
                 if compact {
                     ui.label(RichText::new("Please confirm your email.").strong());
                 } else {
-                    ui.label(RichText::new(format!("Please confirm your email: we sent a link to {email}.")).strong());
+                    ui.label(
+                        RichText::new(if sent {
+                            format!("Please confirm your email: we sent a link to {email}.")
+                        } else {
+                            format!("Please confirm your email ({email}).")
+                        })
+                        .strong(),
+                    );
                     ui.label(
                         RichText::new("It lets you get back into your account if you forget your password.")
                             .small()
@@ -72,7 +83,8 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
                     );
                 }
                 ui.add_space(6.0);
-                if ui.add_enabled(!app.confirm.sending, egui::Button::new("Send it again")).clicked() {
+                let label = if sent { "Send it again" } else { "Send me the link" };
+                if ui.add_enabled(!app.confirm.sending, egui::Button::new(label)).clicked() {
                     send_now = true;
                 }
                 if ui.add(egui::Button::new(RichText::new("Later").color(theme::TEXT_WEAK)).frame(false)).clicked() {

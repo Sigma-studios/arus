@@ -160,6 +160,9 @@ pub struct Me {
     /// The server sends emails (confirm links, password resets).
     #[serde(default)]
     pub mail: bool,
+    /// A confirm link was sent and still works (so "we sent you a link" is true).
+    #[serde(default)]
+    pub confirm_sent: bool,
     pub premium: bool,
     /// The teams this account is in.
     pub teams: Vec<MyTeam>,

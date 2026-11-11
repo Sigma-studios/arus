@@ -1453,7 +1453,7 @@ async fn signup_sends_a_confirm_link() {
     let t = T::with_mail();
     let bob = t.signup("bob", "Bob@Example.com", "correct horse").await;
     let me = t.me(&bob).await;
-    assert!(me.mail && !me.email_verified);
+    assert!(me.mail && !me.email_verified && me.confirm_sent);
     let mails = t.outbox();
     assert_eq!(mails.len(), 1);
     assert_eq!(mails[0].to, "Bob@Example.com");
@@ -1469,7 +1469,8 @@ async fn signup_sends_a_confirm_link() {
     let r = t.page(&link).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.text().contains("Email confirmed"), "{}", r.text());
-    assert!(t.me(&bob).await.email_verified);
+    let me = t.me(&bob).await;
+    assert!(me.email_verified && !me.confirm_sent);
     // a link works once
     assert!(t.page(&link).await.text().contains("Link expired"));
     assert!(t.page("/confirm-email/nonsense").await.text().contains("Link expired"));
