@@ -1,6 +1,6 @@
 [package]
 name = "arrus-server"
-description = "arus backend: accounts, teams, choreography storage, serves the web client"
+description = "Eightcount backend: accounts, teams, choreography storage, serves the web client"
 edition.workspace = true
 version.workspace = true
 

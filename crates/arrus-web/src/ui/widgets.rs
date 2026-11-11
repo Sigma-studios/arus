@@ -5,7 +5,7 @@ use egui::{Color32, CornerRadius, Id, Margin, Response, RichText, Stroke, Ui, Ve
 use crate::theme;
 
 /// Phones: hide the browser bars. Real fullscreen where the browser allows
-/// it; otherwise (iPhone) how to open arus from the home screen instead.
+/// it; otherwise (iPhone) how to open Eightcount from the home screen instead.
 /// Nothing when already running as a home-screen app.
 pub fn fullscreen_button(ui: &mut Ui) {
     if crate::web::standalone() {
@@ -20,10 +20,10 @@ pub fn fullscreen_button(ui: &mut Ui) {
         ui.menu_button("Fullscreen", |ui| {
             ui.set_max_width(260.0);
             ui.label(RichText::new("Fullscreen on iPhone").strong());
-            ui.label("Safari doesn't let websites hide its bars. Open arus as an app instead:");
+            ui.label("Safari doesn't let websites hide its bars. Open Eightcount as an app instead:");
             ui.label("1. Tap the Share button");
             ui.label("2. Choose “Add to Home Screen”");
-            ui.label("3. Open arus from the new icon");
+            ui.label("3. Open Eightcount from the new icon");
             ui.label(RichText::new("It then runs without the address bar. You log in once in the app.").small().color(theme::TEXT_WEAK));
         });
     }

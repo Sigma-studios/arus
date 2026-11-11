@@ -1,4 +1,4 @@
-// arus as an app: the hosted arus web app in its own window, rendered by the
+// Eightcount as an app: the hosted Eightcount web app in its own window, rendered by the
 // platform's web engine. Logins, choreographies and music all stay on the
 // server; the app keeps its own cookies, so you stay logged in.
 //
@@ -19,18 +19,18 @@ import 'windows_view.dart';
 
 void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(ArusApp(url: startUrl(args)));
+  runApp(EightcountApp(url: startUrl(args)));
 }
 
-class ArusApp extends StatelessWidget {
-  const ArusApp({super.key, required this.url});
+class EightcountApp extends StatelessWidget {
+  const EightcountApp({super.key, required this.url});
 
   final String url;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'arus',
+      title: 'Eightcount',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

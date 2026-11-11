@@ -1,4 +1,4 @@
-//! Typed calls to the arus API, and the inbox that brings async results back
+//! Typed calls to the Eightcount API, and the inbox that brings async results back
 //! to the UI thread as closures over the [`App`].
 
 use std::cell::RefCell;

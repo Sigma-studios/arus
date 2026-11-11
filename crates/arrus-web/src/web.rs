@@ -215,7 +215,7 @@ pub fn toggle_fullscreen() {
     }
 }
 
-// The arus apps (app/ in the repository) show this page in a webview. On
+// The Eightcount apps (app/ in the repository) show this page in a webview. On
 // Android, iOS and macOS the webview neither downloads nor (macOS) opens file
 // pickers, so the page hands those to the app through its `ArusApp` channel;
 // see app/lib/webkit_view.dart for the messages.
@@ -225,7 +225,7 @@ export function app_bridge() {
   return !!a && typeof a.postMessage === 'function';
 }
 export function in_app() {
-  return !!(window.chrome && window.chrome.webview) || app_bridge() || navigator.userAgent.includes('arus-app');
+  return !!(window.chrome && window.chrome.webview) || app_bridge() || /(eightcount|arus)-app/.test(navigator.userAgent);
 }
 export async function app_save(url) {
   const r = await fetch(url, { credentials: 'same-origin' });
@@ -233,7 +233,7 @@ export async function app_save(url) {
   const cd = r.headers.get('Content-Disposition') || '';
   const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
   const plain = /filename="([^"]+)"/i.exec(cd);
-  const name = star ? decodeURIComponent(star[1]) : plain ? plain[1] : 'arus';
+  const name = star ? decodeURIComponent(star[1]) : plain ? plain[1] : 'eightcount';
   const blob = await r.blob();
   const data = await new Promise((ok, err) => {
     const fr = new FileReader();
@@ -287,7 +287,7 @@ extern "C" {
     fn js_device_os() -> String;
 }
 
-/// Running inside one of the arus apps (not a browser).
+/// Running inside one of the Eightcount apps (not a browser).
 pub fn in_app() -> bool {
     js_in_app()
 }

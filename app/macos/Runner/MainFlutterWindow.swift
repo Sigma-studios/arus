@@ -9,7 +9,7 @@ class MainFlutterWindow: NSWindow {
     self.setContentSize(NSSize(width: 1280, height: 800))
     self.contentMinSize = NSSize(width: 640, height: 480)
     self.center()
-    self.title = "arus"
+    self.title = "Eightcount"
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

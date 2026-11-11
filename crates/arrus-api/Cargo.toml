@@ -1,6 +1,6 @@
 [package]
 name = "arrus-api"
-description = "Types shared by the arus server and web client"
+description = "Types shared by the Eightcount server and web client"
 edition.workspace = true
 version.workspace = true
 

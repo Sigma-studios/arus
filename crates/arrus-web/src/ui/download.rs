@@ -1,4 +1,4 @@
-//! Download screen: the arus apps (app/ in the repository) for every system.
+//! Download screen: the Eightcount apps (app/ in the repository) for every system.
 //! The visitor's own system comes first, with its install steps open.
 
 use egui::{Frame, Margin, RichText, ScrollArea, Ui};
@@ -29,13 +29,13 @@ const PLATFORMS: &[Platform] = &[
         os: "windows",
         name: "Windows",
         blurb: "Windows 10 and 11.",
-        file: Some("arus-windows.zip"),
+        file: Some("eightcount-windows.zip"),
         button: "Download for Windows",
         steps: &[
-            "Open the downloaded arus-windows.zip and choose \"Extract all\".",
+            "Open the downloaded eightcount-windows.zip and choose \"Extract all\".",
             "Move the extracted folder where you want to keep it, e.g. Documents.",
-            "Open arus.exe in that folder. Keep the other files next to it.",
-            "Optional: right-click arus.exe → \"Pin to taskbar\".",
+            "Open Eightcount.exe in that folder. Keep the other files next to it.",
+            "Optional: right-click Eightcount.exe → \"Pin to taskbar\".",
         ],
         note: "Windows may warn about an unknown publisher (the app isn't signed): \
                click \"More info\" → \"Run anyway\".",
@@ -44,12 +44,12 @@ const PLATFORMS: &[Platform] = &[
         os: "macos",
         name: "macOS",
         blurb: "macOS 12 (Monterey) or newer, Apple silicon and Intel.",
-        file: Some("arus-macos.zip"),
+        file: Some("eightcount-macos.zip"),
         button: "Download for macOS",
         steps: &[
-            "Open the downloaded arus-macos.zip (Safari may already have unzipped it).",
-            "Drag arus.app into your Applications folder.",
-            "Open arus. If macOS says it can't check the app: open System Settings → \
+            "Open the downloaded eightcount-macos.zip (Safari may already have unzipped it).",
+            "Drag Eightcount.app into your Applications folder.",
+            "Open Eightcount. If macOS says it can't check the app: open System Settings → \
              Privacy & Security, scroll down and click \"Open Anyway\".",
         ],
         note: "The app isn't notarized by Apple yet, hence the one-time warning.",
@@ -58,11 +58,11 @@ const PLATFORMS: &[Platform] = &[
         os: "linux",
         name: "Linux",
         blurb: "64-bit (x86-64) with GTK 3 and WebKitGTK.",
-        file: Some("arus-linux-x64.tar.gz"),
+        file: Some("eightcount-linux-x64.tar.gz"),
         button: "Download for Linux",
         steps: &[
-            "Extract it: tar xzf arus-linux-x64.tar.gz",
-            "Run ./arus/arus (keep the other files next to it).",
+            "Extract it: tar xzf eightcount-linux-x64.tar.gz",
+            "Run ./eightcount/eightcount (keep the other files next to it).",
             "If it doesn't start, install WebKitGTK: sudo apt install libwebkit2gtk-4.1-0 \
              (Debian/Ubuntu) or sudo dnf install webkit2gtk4.1 (Fedora).",
         ],
@@ -72,12 +72,12 @@ const PLATFORMS: &[Platform] = &[
         os: "android",
         name: "Android",
         blurb: "Android 7 or newer.",
-        file: Some("arus-android.apk"),
+        file: Some("eightcount-android.apk"),
         button: "Download for Android",
         steps: &[
-            "Open the downloaded arus-android.apk.",
+            "Open the downloaded eightcount-android.apk.",
             "If asked, allow your browser to install unknown apps, then tap \"Install\".",
-            "Open arus from your home screen.",
+            "Open Eightcount from your home screen.",
         ],
         note: "The app comes from here, not from Google Play: Android asks once \
                whether you trust the source.",
@@ -106,8 +106,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ui.heading("Get the app");
                 ui.label(
                     RichText::new(
-                        "arus in its own window, with its own icon. You stay logged in, and the app always \
-                         shows the latest version of arus, so you only install it once.",
+                        "Eightcount in its own window, with its own icon. You stay logged in, and the app always \
+                         shows the latest version of Eightcount, so you only install it once.",
                     )
                     .color(theme::TEXT_WEAK),
                 );

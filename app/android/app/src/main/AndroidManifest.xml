@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- arus is a website: it needs the internet. -->
+    <!-- Eightcount is a website: it needs the internet. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="arus"
+        android:label="Eightcount"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

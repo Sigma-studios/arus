@@ -401,7 +401,7 @@ impl App {
             .show_separator_line(true)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("arus").size(if compact { 20.0 } else { 22.0 }).strong().color(theme::accent()));
+                    ui.label(RichText::new("Eightcount").size(if compact { 20.0 } else { 22.0 }).strong().color(theme::accent()));
                     ui.add_space(if compact { 2.0 } else { 14.0 });
                     let in_editor = self.screen == Screen::Editor;
                     // On compact layouts the library is the only screen (the
@@ -427,7 +427,7 @@ impl App {
                         if !web::in_app()
                             && ui
                                 .add(egui::Button::selectable(self.screen == Screen::Download, "Download"))
-                                .on_hover_text("arus for Windows")
+                                .on_hover_text("Eightcount for Windows, macOS, Linux, Android and iPhone")
                                 .clicked()
                         {
                             self.go(Screen::Download);
@@ -722,7 +722,7 @@ impl eframe::App for App {
             egui::CentralPanel::default().frame(bg).show(ui, |ui| {
                 ui.centered_and_justified(|ui| match &self.boot_error {
                     Some(e) => {
-                        ui.label(RichText::new(format!("Could not start arus: {e}")).color(theme::ERROR));
+                        ui.label(RichText::new(format!("Could not start Eightcount: {e}")).color(theme::ERROR));
                     }
                     None => {
                         ui.spinner();

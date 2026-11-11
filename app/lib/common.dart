@@ -10,7 +10,7 @@ const background = Color(0xFF0B0B0C);
 const foreground = Color(0xFFA0A0A8);
 const accent = Color(0xFF8B5CF6);
 
-/// The server to open: `--url <url>`, else ARUS_URL (desktop), else arus.
+/// The server to open: `--url <url>`, else ARUS_URL (desktop), else Eightcount's server.
 String startUrl(List<String> args) {
   final i = args.indexOf('--url');
   if (i >= 0 && i + 1 < args.length) return args[i + 1];
@@ -23,7 +23,7 @@ String startUrl(List<String> args) {
 Widget overlay({required bool failed, required String url, required String error, required VoidCallback retry}) {
   final Widget content = failed
       ? message(
-          'Could not reach arus',
+          'Could not reach Eightcount',
           'Check your internet connection.\n$url · $error',
           action: FilledButton(onPressed: retry, child: const Text('Try again')),
         )

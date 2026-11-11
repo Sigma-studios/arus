@@ -1,4 +1,7 @@
-# arus
+# Eightcount
+
+(Formerly "arus"; internal names such as the crates, the repository, the
+Facade app and `arus.db` keep the old name.)
 
 A web app to view and edit dance choreographies made with the
 [ArrangeUs](https://play.google.com/store/apps/details?id=com.AndriyStefanchuk.ArrangeUs.main)
@@ -90,7 +93,7 @@ ARUS_ADMIN_PASSWORD=dev ARUS_INSECURE_COOKIES=1 ARUS_DATA_DIR=./data \
 
 ## Apps (Windows, macOS, Linux, Android, iOS)
 
-`app/` is a small Flutter app that opens the hosted arus
+`app/` is a small Flutter app that opens the hosted Eightcount
 (`https://arus.online-app.xyz`) in its own window. Everything else (accounts,
 choreographies, music) stays on the server, so web updates reach the apps
 without a new install. `--url <url>` (or `ARUS_URL`, desktop) points it at
@@ -106,13 +109,13 @@ The site hides its Download page inside the apps (`web::in_app`).
 
 **Releases** are built by GitHub Actions (`.github/workflows/apps.yml`): push a
 tag `app-v<version>` (e.g. `app-v1.1.0`) and it publishes a release with
-`arus-windows.zip`, `arus-macos.zip`, `arus-linux-x64.tar.gz` and
-`arus-android.apk`, which the Download page links to
+`eightcount-windows.zip`, `eightcount-macos.zip`, `eightcount-linux-x64.tar.gz` and
+`eightcount-android.apk`, which the Download page links to
 (`releases/latest/download/<file>`). Every push to `main` touching `app/`
 builds all platforms as a check. The Android release key lives outside the
 repo; CI gets it from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets. iOS is published
-through the App Store (bundle ID `xyz.onlineapp.arus`); set its link in
+through the App Store (bundle ID `xyz.onlineapp.eightcount`); set its link in
 `crates/arrus-web/src/ui/download.rs` (`APP_STORE`).
 
 Building locally needs Flutter plus the platform's tools (Visual Studio C++

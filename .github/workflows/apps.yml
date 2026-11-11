@@ -1,4 +1,4 @@
-# Builds the arus apps (app/) for Windows, macOS, Linux, Android and iOS.
+# Builds the Eightcount apps (app/) for Windows, macOS, Linux, Android and iOS.
 #
 # - Every push to main that touches app/: build all of them (a check; the
 #   files are kept as workflow artifacts for a few days).
@@ -60,11 +60,11 @@ jobs:
       - run: flutter build windows --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath arus-windows.zip
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath eightcount-windows.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: arus-windows
-          path: app/arus-windows.zip
+          name: eightcount-windows
+          path: app/eightcount-windows.zip
           retention-days: 7
 
   linux:
@@ -82,12 +82,12 @@ jobs:
       - name: Pack
         run: |
           mkdir -p dist
-          cp -r build/linux/x64/release/bundle dist/arus
-          tar czf arus-linux-x64.tar.gz -C dist arus
+          cp -r build/linux/x64/release/bundle dist/eightcount
+          tar czf eightcount-linux-x64.tar.gz -C dist eightcount
       - uses: actions/upload-artifact@v7
         with:
-          name: arus-linux
-          path: app/arus-linux-x64.tar.gz
+          name: eightcount-linux
+          path: app/eightcount-linux-x64.tar.gz
           retention-days: 7
 
   android:
@@ -109,8 +109,8 @@ jobs:
       - name: Release key
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/arus.jks"
-            echo "ARUS_ANDROID_KEYSTORE=$RUNNER_TEMP/arus.jks" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "ARUS_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 is not set: a release APK needs the release key."
             exit 1
@@ -122,11 +122,11 @@ jobs:
           ARUS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ARUS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ARUS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      - run: cp build/app/outputs/flutter-apk/app-release.apk arus-android.apk
+      - run: cp build/app/outputs/flutter-apk/app-release.apk eightcount-android.apk
       - uses: actions/upload-artifact@v7
         with:
-          name: arus-android
-          path: app/arus-android.apk
+          name: eightcount-android
+          path: app/eightcount-android.apk
           retention-days: 7
 
   macos:
@@ -140,11 +140,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter build macos --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
-      - run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/arus.app arus-macos.zip
+      - run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Eightcount.app eightcount-macos.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: arus-macos
-          path: app/arus-macos.zip
+          name: eightcount-macos
+          path: app/eightcount-macos.zip
           retention-days: 7
 
   # A compile check only: the App Store build is signed with the Apple
@@ -181,5 +181,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" files/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "arus apps ${GITHUB_REF_NAME#app-v}" \
-            --notes "arus for Windows, macOS, Linux and Android. Get it from the Download page on https://arus.online-app.xyz (it has the install steps). The apps show the live site, so they rarely need updating."
+            --title "Eightcount apps ${GITHUB_REF_NAME#app-v}" \
+            --notes "Eightcount for Windows, macOS, Linux and Android. Get it from the Download page on https://arus.online-app.xyz (it has the install steps). The apps show the live site, so they rarely need updating."

@@ -1,4 +1,4 @@
-//! "arus was updated": every open page (and the apps, which show this page)
+//! "Eightcount was updated": every open page (and the apps, which show this page)
 //! asks the server which client it hands out, every minute and when the window
 //! gets focus again. Once that differs from the version seen at start, a bar
 //! offers to reload.
@@ -75,9 +75,9 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(if compact {
-                        "arus was updated."
+                        "Eightcount was updated."
                     } else {
-                        "arus was updated. Reload to use the new version."
+                        "Eightcount was updated. Reload to use the new version."
                     })
                     .color(text)
                     .strong(),

@@ -1,6 +1,6 @@
 [package]
 name = "arrus-web"
-description = "Browser client for arus: view and edit ArrangeUs choreographies"
+description = "Browser client for Eightcount: view and edit ArrangeUs choreographies"
 edition.workspace = true
 version.workspace = true
 

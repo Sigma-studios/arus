@@ -1,6 +1,6 @@
 {
-  "name": "arus",
-  "short_name": "arus",
+  "name": "Eightcount",
+  "short_name": "Eightcount",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -132,7 +132,7 @@ class _WebKitViewState extends State<WebKitView> {
     }
     switch (msg['type']) {
       case 'save':
-        await _save(msg['name'] as String? ?? 'arus', msg['mime'] as String? ?? 'application/octet-stream',
+        await _save(msg['name'] as String? ?? 'eightcount', msg['mime'] as String? ?? 'application/octet-stream',
             msg['data'] as String? ?? '');
       case 'pick':
         await _pick((msg['id'] as num?)?.toInt() ?? 0, msg['accept'] as String? ?? '', msg['multiple'] == true);

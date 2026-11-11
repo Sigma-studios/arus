@@ -57,7 +57,7 @@ pub fn message(kind: AlertKind, used: u64, limit: u64, mention: Option<&str>, pu
         s.push_str(m);
         s.push(' ');
     }
-    s.push_str(&format!("arus: {what} ({} / {} GB, {pct:.0} %)", gb(used), gb(limit)));
+    s.push_str(&format!("Eightcount: {what} ({} / {} GB, {pct:.0} %)", gb(used), gb(limit)));
     if let Some(url) = public_url {
         s.push_str(&format!(" {url}"));
     }
@@ -237,7 +237,7 @@ impl Notifier {
         let url = self.discord().webhook.ok_or_else(|| "no Discord webhook is set".to_owned())?;
         let pct = if limit == 0 { 100.0 } else { used as f64 * 100.0 / limit as f64 };
         let mut msg = format!(
-            "arus: test message. Storage alerts will be posted here (now {} / {} GB, {pct:.0} %).",
+            "Eightcount: test message. Storage alerts will be posted here (now {} / {} GB, {pct:.0} %).",
             gb(used),
             gb(limit)
         );
@@ -315,9 +315,9 @@ mod tests {
     fn messages() {
         let gib = 1024 * 1024 * 1024;
         let m = message(AlertKind::Crossed80, 4 * gib, 5 * gib, Some("@here"), Some("https://arus.example"));
-        assert_eq!(m, "@here arus: storage is over 80 % (4.00 / 5.00 GB, 80 %) https://arus.example");
+        assert_eq!(m, "@here Eightcount: storage is over 80 % (4.00 / 5.00 GB, 80 %) https://arus.example");
         let m = message(AlertKind::BackUnder75, gib, 5 * gib, Some("@here"), None);
-        assert_eq!(m, "arus: storage is back under 75 % (1.00 / 5.00 GB, 20 %)");
+        assert_eq!(m, "Eightcount: storage is back under 75 % (1.00 / 5.00 GB, 20 %)");
     }
 
     #[test]

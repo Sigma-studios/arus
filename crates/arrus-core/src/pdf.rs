@@ -587,7 +587,7 @@ fn write_file(title: &str, pages: &[Vec<u8>]) -> Vec<u8> {
     obj(&mut out, format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), pages.len()).as_bytes());
     obj(&mut out, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
     obj(&mut out, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
-    let mut info = b"<< /Producer (arus) /Title (".to_vec();
+    let mut info = b"<< /Producer (Eightcount) /Title (".to_vec();
     info.extend(encode(title));
     info.extend_from_slice(b") >>");
     obj(&mut out, &info);

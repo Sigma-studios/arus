@@ -1,4 +1,4 @@
-//! The arus backend: accounts, teams, choreography storage, and the embedded web client.
+//! The Eightcount backend: accounts, teams, choreography storage, and the embedded web client.
 
 pub mod alerts;
 pub mod auth;

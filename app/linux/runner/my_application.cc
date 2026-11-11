@@ -1,14 +1,14 @@
-// arus for Linux: the hosted arus in a GTK window, rendered by WebKitGTK.
+// Eightcount for Linux: the hosted Eightcount in a GTK window, rendered by WebKitGTK.
 //
 // Flutter has no embeddable webview on Linux, so this runner shows WebKitGTK
 // itself instead of a Flutter view (the Dart code in lib/ is not used here).
 // It needs the system's libwebkit2gtk-4.1 (installed on most desktops).
 //
-// - Login cookies and site data: ~/.local/share/xyz.onlineapp.arus
+// - Login cookies and site data: ~/.local/share/xyz.onlineapp.eightcount
 // - File uploads: WebKitGTK's own file chooser.
 // - Downloads (exports): a save dialog.
 // - Links to other sites: the default browser.
-// - Another server: `arus --url http://localhost:8080` or ARUS_URL.
+// - Another server: `eightcount --url http://localhost:8080` or ARUS_URL.
 
 #include "my_application.h"
 
@@ -63,7 +63,7 @@ static gboolean decide_policy_cb(WebKitWebView* view, WebKitPolicyDecision* deci
     return TRUE;
   }
   if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
-    // One window: open arus links here.
+    // One window: open Eightcount links here.
     webkit_web_view_load_uri(view, uri);
     webkit_policy_decision_ignore(decision);
     return TRUE;
@@ -82,7 +82,7 @@ static gboolean load_failed_cb(WebKitWebView* view, WebKitLoadEvent event, const
   g_autofree gchar* html = g_strdup_printf(
       "<html><body style=\"background:%s;color:#A0A0A8;font-family:sans-serif;display:flex;"
       "height:100vh;margin:0;align-items:center;justify-content:center;text-align:center\">"
-      "<div><h2 style=\"color:#fff;font-weight:600\">Could not reach arus</h2>"
+      "<div><h2 style=\"color:#fff;font-weight:600\">Could not reach Eightcount</h2>"
       "<p>Check your internet connection.<br>%s &middot; %s</p>"
       "<p><a href=\"%s\" style=\"color:#fff;background:#8B5CF6;padding:8px 18px;border-radius:8px;"
       "text-decoration:none\">Try again</a></p></div></body></html>",
@@ -132,11 +132,11 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "arus");
+    gtk_header_bar_set_title(header_bar, "Eightcount");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "arus");
+    gtk_window_set_title(window, "Eightcount");
   }
   gtk_window_set_default_size(window, 1280, 800);
   g_autofree gchar* icon = asset_path("icon.png");
@@ -155,8 +155,8 @@ static void my_application_activate(GApplication* application) {
 
   WebKitWebView* view = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(context));
   WebKitSettings* settings = webkit_web_view_get_settings(view);
-  // "arus-app" in the user agent: the site hides its Download page here.
-  webkit_settings_set_user_agent_with_application_details(settings, "arus-app", "1");
+  // "eightcount-app" in the user agent: the site hides its Download page here.
+  webkit_settings_set_user_agent_with_application_details(settings, "eightcount-app", "1");
   webkit_settings_set_media_playback_requires_user_gesture(settings, FALSE);
   webkit_settings_set_javascript_can_access_clipboard(settings, TRUE);
   webkit_settings_set_enable_developer_extras(settings, FALSE);

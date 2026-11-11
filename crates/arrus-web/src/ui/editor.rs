@@ -873,7 +873,7 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                     // Who else has it open, left of Undo (like a shared document).
                     widgets::presence(ui, &ed.live.others(), 6);
-                    if ui.button("Export PDF").on_hover_text("One page per formation, to share with people who don't use arus").clicked() {
+                    if ui.button("Export PDF").on_hover_text("One page per formation, to share with people who don't use Eightcount").clicked() {
                         export_pdf(ed, app);
                     }
                 });

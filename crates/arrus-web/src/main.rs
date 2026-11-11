@@ -1,4 +1,4 @@
-//! arus web client: view and edit ArrangeUs choreographies in the browser.
+//! Eightcount web client: view and edit ArrangeUs choreographies in the browser.
 //!
 //! The geometry / editing logic (`geom`, `view`, `edit`, `undo`, `util`) and
 //! the stage painter (`paint`) are plain Rust + egui and are unit-tested
@@ -43,7 +43,7 @@ fn main() {
         if let Some(loading) = document.get_element_by_id("loading") {
             match result {
                 Ok(()) => loading.remove(),
-                Err(e) => loading.set_text_content(Some(&format!("arus failed to start: {e:?}"))),
+                Err(e) => loading.set_text_content(Some(&format!("Eightcount failed to start: {e:?}"))),
             }
         }
     });

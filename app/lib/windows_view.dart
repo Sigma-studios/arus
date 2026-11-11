@@ -38,7 +38,7 @@ class _WindowsViewState extends State<WindowsView> {
         setState(() => _phase = _Phase.noRuntime);
         return;
       }
-      // Cookies and cache live in %APPDATA%\...\arus\WebView2, not next
+      // Cookies and cache live in %APPDATA%\...\Eightcount\WebView2, not next
       // to the exe (which may sit in a read-only folder).
       final support = await getApplicationSupportDirectory();
       await WebviewController.initializeEnvironment(
@@ -107,8 +107,8 @@ class _WindowsViewState extends State<WindowsView> {
                 child: Center(
                   child: message(
                     'Microsoft Edge WebView2 is missing',
-                    'arus needs the WebView2 Runtime. Install it from\n'
-                        'https://go.microsoft.com/fwlink/p/?LinkId=2124703\nthen start arus again.',
+                    'Eightcount needs the WebView2 Runtime. Install it from\n'
+                        'https://go.microsoft.com/fwlink/p/?LinkId=2124703\nthen start Eightcount again.',
                   ),
                 ),
               ),

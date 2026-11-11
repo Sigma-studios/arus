@@ -4,7 +4,7 @@ project(arus_desktop LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "arus")
+set(BINARY_NAME "Eightcount")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -83,7 +83,7 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
   COMPONENT Runtime)
 
 # Ship the MSVC runtime (vcruntime140.dll, msvcp140.dll, ...) next to the exe,
-# so arus starts on PCs without the Visual C++ Redistributable.
+# so Eightcount starts on PCs without the Visual C++ Redistributable.
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${INSTALL_BUNDLE_LIB_DIR}")
 set(CMAKE_INSTALL_UCRT_LIBRARIES FALSE)
 include(InstallRequiredSystemLibraries)

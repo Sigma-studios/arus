@@ -311,10 +311,10 @@ async fn index(state: &AppState, headers: &HeaderMap) -> Result<Response> {
 }
 
 const NOT_BUILT_HTML: &str = r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>arus</title>
+<html lang="en"><head><meta charset="utf-8"><title>Eightcount</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>body{font-family:system-ui,sans-serif;background:#0b0b0c;color:#e8e8eb;display:grid;place-items:center;min-height:100vh;margin:0}code{color:#b394ff}</style>
-</head><body><div><h1>arus</h1><p>The web client is not built. Run <code>trunk build --release</code> in <code>crates/arrus-web</code> and rebuild the server.</p>
+</head><body><div><h1>Eightcount</h1><p>The web client is not built. Run <code>trunk build --release</code> in <code>crates/arrus-web</code> and rebuild the server.</p>
 <form method="post" action="/logout"><button>Log out</button></form></div></body></html>
 "#;
 
@@ -324,7 +324,7 @@ const LOGIN_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>arus</title>
+<title>Eightcount</title>
 <style>
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0c;color:#e8e8eb;
@@ -348,7 +348,7 @@ const LOGIN_HTML: &str = r#"<!doctype html>
 </head>
 <body>
 <main>
-  <h1>arus</h1>
+  <h1>Eightcount</h1>
   <p class="sub">Choreographies for your team</p>
   {{error}}
   <form method="post" action="/login">
@@ -372,7 +372,7 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>arus · sign up</title>
+<title>Eightcount · sign up</title>
 <style>
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0c;color:#e8e8eb;
@@ -396,7 +396,7 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
 </head>
 <body>
 <main>
-  <h1>arus</h1>
+  <h1>Eightcount</h1>
   <p class="sub">Create your account</p>
   {{error}}
   <form method="post" action="/signup">
@@ -425,7 +425,7 @@ const INVALID_INVITE_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>arus · invite</title>
+<title>Eightcount · invite</title>
 <style>
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0c;color:#e8e8eb;
@@ -449,9 +449,9 @@ const INVALID_INVITE_HTML: &str = r#"<!doctype html>
 </head>
 <body>
 <main>
-  <h1>arus</h1>
+  <h1>Eightcount</h1>
   <p class="sub">This invite link does not work anymore. Ask the team's owner for a new one.</p>
-  <p class="alt"><a href="/">Open arus</a></p>
+  <p class="alt"><a href="/">Open Eightcount</a></p>
 </main>
 </body>
 </html>

@@ -230,7 +230,7 @@ async fn login_logout_and_cookie_flags() {
     let r = t.send(Request::get("/login").body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
     let html = r.text();
-    assert!(html.contains("<title>arus</title>"));
+    assert!(html.contains("<title>Eightcount</title>"));
     assert!(html.contains(r#"autocomplete="username""#) && html.contains(r#"autocomplete="current-password""#));
     assert!(!html.contains("Wrong nickname"));
     assert!(html.contains(r#"href="/signup""#));

@@ -1,5 +1,5 @@
-name: arus
-description: "arus: the hosted arus web app as an app for Windows, macOS, Linux, Android and iOS."
+name: eightcount
+description: "Eightcount: the hosted Eightcount web app as an app for Windows, macOS, Linux, Android and iOS."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
