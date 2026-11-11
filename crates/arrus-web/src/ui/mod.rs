@@ -3,6 +3,7 @@
 mod account;
 mod accounts;
 mod admin;
+mod download;
 mod editor;
 mod inspector;
 mod library;
@@ -31,6 +32,8 @@ pub enum Screen {
     Admin,
     /// Admin: every account.
     Accounts,
+    /// The Windows app.
+    Download,
     Editor,
 }
 
@@ -41,6 +44,7 @@ impl Screen {
             Screen::Team => Some("team"),
             Screen::Admin => Some("admin"),
             Screen::Accounts => Some("accounts"),
+            Screen::Download => Some("download"),
             Screen::Library | Screen::Editor => None,
         }
     }
@@ -151,6 +155,7 @@ impl App {
                         Some("admin") if admin => self.go(Screen::Admin),
                         Some("accounts") if admin => self.go(Screen::Accounts),
                         Some("team") if self.team.is_some() => self.go(Screen::Team),
+                        Some("download") => self.go(Screen::Download),
                         _ => web::set_hash_screen(None),
                     }
                 }
@@ -363,7 +368,7 @@ impl App {
                 admin::load_alerts(self);
             }
             Screen::Accounts => accounts::load(self),
-            Screen::Editor => {}
+            Screen::Download | Screen::Editor => {}
         }
     }
 
@@ -413,6 +418,15 @@ impl App {
                             if ui.add(egui::Button::selectable(self.screen == Screen::Accounts, "Accounts")).clicked() {
                                 self.go(Screen::Accounts);
                             }
+                        }
+                        // Not inside the Windows app itself.
+                        if !web::in_windows_app()
+                            && ui
+                                .add(egui::Button::selectable(self.screen == Screen::Download, "Download"))
+                                .on_hover_text("arus for Windows")
+                                .clicked()
+                        {
+                            self.go(Screen::Download);
                         }
                         ui.add_space(8.0);
                     }
@@ -719,6 +733,7 @@ impl eframe::App for App {
             Screen::Team => team::show(self, ui),
             Screen::Admin => admin::show(self, ui),
             Screen::Accounts => accounts::show(self, ui),
+            Screen::Download => download::show(self, ui),
             Screen::Editor => {
                 if let Some(mut ed) = self.editor.take() {
                     editor::show(&mut ed, self, ui);

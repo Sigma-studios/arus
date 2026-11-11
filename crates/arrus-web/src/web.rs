@@ -197,6 +197,15 @@ pub fn toggle_fullscreen() {
     }
 }
 
+/// Running inside the arus Windows app (Edge WebView2 exposes `chrome.webview`).
+pub fn in_windows_app() -> bool {
+    js_sys::Reflect::get(&window().into(), &JsValue::from_str("chrome"))
+        .ok()
+        .filter(|c| c.is_object())
+        .and_then(|c| js_sys::Reflect::get(&c, &JsValue::from_str("webview")).ok())
+        .is_some_and(|w| w.is_object())
+}
+
 /// Opened from the home screen as an app (no browser bars to hide).
 pub fn standalone() -> bool {
     let media = window().match_media("(display-mode: standalone)").ok().flatten().is_some_and(|m| m.matches());
