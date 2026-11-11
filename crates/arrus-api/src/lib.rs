@@ -19,6 +19,7 @@
 //! | GET  | `/join/{token}` | | joins the team, 303 to `/#team={id}` (to `/login?next=…` when logged out) | anyone |
 //! | POST | `/logout` | | 303 to `/login` | logged in |
 //! | GET  | `/healthz` | | `ok` | anyone |
+//! | GET  | `/api/version` | | [`Version`] | anyone |
 //! | GET  | `/api/me` | | [`Me`] | logged in |
 //! | PATCH | `/api/me` | [`UpdateMe`] | [`Me`]; 403 `wrong_password`, 429 `nickname_too_soon` | accounts |
 //! | PUT  | `/api/me/prefs` | [`UserPrefs`] | [`UserPrefs`] (cleaned) | logged in |
@@ -533,6 +534,15 @@ pub struct ImportResult {
     pub created: Vec<ChoreographySummary>,
     /// Human-readable notes, e.g. a backup's deleted choreographies that were skipped.
     pub notes: Vec<String>,
+}
+
+/// Which web client the server hands out. It changes with every deploy that
+/// changes the client, so open pages (and the apps) can offer to reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Version {
+    /// Short hash of the client's `index.html` (which names its hashed
+    /// files); `dev` when the client is not built.
+    pub client: String,
 }
 
 /// Storage use against the app-wide limit (5 GiB). Counts choreography JSON and

@@ -321,6 +321,14 @@ async fn misc_routes() {
     let t = T::new();
     let r = t.send(Request::get("/healthz").body(Body::empty()).unwrap()).await;
     assert_eq!((r.status, r.text().as_str()), (StatusCode::OK, "ok"));
+    // the client version: no login needed, never cached, stable between calls
+    let r = t.send(Request::get("/api/version").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+    let v: Version = r.json();
+    assert!(!v.client.is_empty());
+    let again: Version = t.send(Request::get("/api/version").body(Body::empty()).unwrap()).await.json();
+    assert_eq!(v, again);
     let admin = t.admin().await;
     let r = t.get("/api/nope", &admin).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);

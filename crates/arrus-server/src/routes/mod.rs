@@ -31,6 +31,7 @@ pub const JSON_LIMIT: usize = 64 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
+        .route("/version", get(web::version))
         .route("/me", get(accounts::me).patch(accounts::update_me))
         .route("/me/prefs", put(accounts::update_prefs))
         .route("/accounts", get(accounts::list).post(accounts::create))

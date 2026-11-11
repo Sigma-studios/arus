@@ -86,6 +86,11 @@ pub fn navigate(url: &str) {
     let _ = window().location().set_href(url);
 }
 
+/// Load the page again (the browser asks first if there are unsaved changes).
+pub fn reload() {
+    let _ = window().location().reload();
+}
+
 /// The choreography named in the URL fragment (`#c=42`), if any.
 pub fn hash_choreography() -> Option<i64> {
     let h = window().location().hash().ok()?;

@@ -239,6 +239,19 @@ pub async fn healthz() -> &'static str {
     "ok"
 }
 
+/// The served client's version (see [`arrus_api::Version`]).
+pub async fn version() -> Response {
+    no_store(axum::Json(arrus_api::Version { client: client_version().to_owned() }).into_response())
+}
+
+fn client_version() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| match Assets::get("index.html") {
+        Some(f) => f.metadata.sha256_hash()[..8].iter().map(|b| format!("{b:02x}")).collect(),
+        None => "dev".into(),
+    })
+}
+
 /// The client's `index.html`, or a placeholder when the client is not built.
 fn index_response() -> Response {
     let r = match Assets::get("index.html") {

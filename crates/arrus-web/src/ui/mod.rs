@@ -14,6 +14,7 @@ mod settings;
 mod stage;
 mod team;
 mod timeline;
+mod update;
 mod widgets;
 
 use arrus_api::{CreateTeam, FREE_CHOREOGRAPHIES, FREE_TEAMS, Me, MyTeam, Role, Storage, Team, TeamId, TeamRole};
@@ -83,6 +84,8 @@ pub struct App {
     pub team_ui: team::TeamUi,
     pub account: account::AccountUi,
     pub settings: settings::SettingsUi,
+    /// Whether the server hands out a newer client (a deploy happened).
+    pub update: update::UpdateWatch,
     /// "New team" dialog: the name typed, and whether it is being created.
     new_team: Option<(String, bool)>,
     pub editor: Option<Box<editor::Editor>>,
@@ -118,6 +121,7 @@ impl App {
             team_ui: Default::default(),
             account: Default::default(),
             settings: Default::default(),
+            update: Default::default(),
             new_team: None,
             editor: None,
             opening: None,
@@ -700,6 +704,7 @@ impl eframe::App for App {
         for h in self.net.drain() {
             h(self);
         }
+        update::tick(self, &ctx);
 
         let narrow = ctx.content_rect().width() < 900.0;
         self.compact = self.touch || narrow;
@@ -733,6 +738,7 @@ impl eframe::App for App {
         if !in_phone_editor {
             self.top_bar(ui);
         }
+        update::bar(self, ui);
         match self.screen {
             Screen::Library => library::show(self, ui),
             Screen::Team => team::show(self, ui),
