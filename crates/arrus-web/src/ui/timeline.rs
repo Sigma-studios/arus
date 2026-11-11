@@ -151,10 +151,27 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
                         .size(12.5)
                         .color(theme::TEXT_WEAK),
                 );
-                ui.add(egui::Label::new(RichText::new(formation_label(ed)).size(13.5)).truncate());
+                // The timeline open / closed, at the right end.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (icon, tip) = if ed.timeline_collapsed {
+                        (Icon::Expand, "Show the timeline")
+                    } else {
+                        (Icon::Collapse, "Hide the timeline")
+                    };
+                    if transport_button(ui, vec2(38.0, 30.0), icon, None).on_hover_text(tip).clicked() {
+                        ed.timeline_collapsed = !ed.timeline_collapsed;
+                        crate::web::set_pref(super::editor::TIMELINE_COLLAPSED, if ed.timeline_collapsed { "1" } else { "0" });
+                    }
+                    // The rest of the row, left-aligned after the time.
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(formation_label(ed)).size(13.5)).truncate());
+                    });
+                });
             });
-            ui.add_space(8.0);
-            bar(ed, ui);
+            if !ed.timeline_collapsed {
+                ui.add_space(8.0);
+                bar(ed, ui);
+            }
         });
 }
 
@@ -181,6 +198,10 @@ enum Icon {
     Next,
     Play,
     Pause,
+    /// Chevron up: open the timeline.
+    Expand,
+    /// Chevron down: close it.
+    Collapse,
 }
 
 /// A button with a painted transport icon (font-independent).
@@ -208,6 +229,13 @@ fn transport_button(ui: &mut Ui, size: egui::Vec2, icon: Icon, fill: Option<Colo
                 let r = Rect::from_center_size(pos2(c.x + dx * s, c.y), vec2(s * 0.5, s * 2.0));
                 p.rect_filled(r, 1.0, col);
             }
+        }
+        Icon::Expand | Icon::Collapse => {
+            let d = if matches!(icon, Icon::Expand) { 1.0 } else { -1.0 };
+            let stroke = Stroke::new(2.2, col);
+            let tip = pos2(c.x, c.y - d * s * 0.5);
+            p.line_segment([pos2(c.x - s, c.y + d * s * 0.5), tip], stroke);
+            p.line_segment([tip, pos2(c.x + s, c.y + d * s * 0.5)], stroke);
         }
         Icon::Prev | Icon::Next => {
             let d = if matches!(icon, Icon::Prev) { -1.0 } else { 1.0 };

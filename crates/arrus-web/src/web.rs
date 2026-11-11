@@ -86,6 +86,19 @@ pub fn navigate(url: &str) {
     let _ = window().location().set_href(url);
 }
 
+/// A small per-device preference (`localStorage`); `None` if unset or the
+/// browser keeps no storage (private mode, blocked site data).
+pub fn pref(key: &str) -> Option<String> {
+    window().local_storage().ok().flatten()?.get_item(key).ok().flatten()
+}
+
+/// Store a per-device preference; silently skipped without storage.
+pub fn set_pref(key: &str, value: &str) {
+    if let Some(s) = window().local_storage().ok().flatten() {
+        let _ = s.set_item(key, value);
+    }
+}
+
 /// Load the page again (the browser asks first if there are unsaved changes).
 pub fn reload() {
     let _ = window().location().reload();

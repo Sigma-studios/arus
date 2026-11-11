@@ -35,6 +35,9 @@ pub enum EdModal {
     Rename(String),
 }
 
+/// Local preference key: the phone timeline is collapsed.
+pub const TIMELINE_COLLAPSED: &str = "arus.timeline_collapsed";
+
 pub struct Editor {
     pub summary: ChoreographySummary,
     /// Working copy, without the custom background image (kept in `bg_data`).
@@ -86,6 +89,9 @@ pub struct Editor {
     pub show_formations: bool,
     /// Phone layout: the inspector sheet at the bottom is open.
     pub show_inspector: bool,
+    /// Phone layout: the timeline bar is hidden (only transport and time
+    /// stay). Remembered on this device.
+    pub timeline_collapsed: bool,
     /// "Next formation (outlines)": off whenever a choreography is opened and
     /// only for this screen (the file's own setting is kept as it is).
     pub show_next: bool,
@@ -186,6 +192,7 @@ impl Editor {
             music_busy: false,
             show_formations: !compact,
             show_inspector: false,
+            timeline_collapsed: crate::web::pref(TIMELINE_COLLAPSED).as_deref() == Some("1"),
             show_next: false,
             show_next_paths: false,
             multi_select: false,
