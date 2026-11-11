@@ -32,6 +32,7 @@ defaults:
 
 jobs:
   version:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     outputs:
       name: ${{ steps.v.outputs.name }}
@@ -48,6 +49,7 @@ jobs:
           fi
 
   windows:
+    timeout-minutes: 30
     needs: version
     runs-on: windows-latest
     steps:
@@ -68,11 +70,18 @@ jobs:
           retention-days: 7
 
   linux:
+    timeout-minutes: 30
     needs: version
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Build tools and GTK/WebKitGTK headers
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -91,6 +100,7 @@ jobs:
           retention-days: 7
 
   android:
+    timeout-minutes: 30
     needs: version
     runs-on: ubuntu-latest
     env:
@@ -130,6 +140,7 @@ jobs:
           retention-days: 7
 
   macos:
+    timeout-minutes: 30
     needs: version
     runs-on: macos-latest
     steps:
@@ -150,6 +161,7 @@ jobs:
   # A compile check only: the App Store build is signed with the Apple
   # developer account and uploaded from Xcode (or a later CI step).
   ios:
+    timeout-minutes: 30
     needs: version
     runs-on: macos-latest
     steps:
@@ -162,6 +174,7 @@ jobs:
       - run: flutter build ios --release --no-codesign --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
 
   release:
+    timeout-minutes: 30
     if: startsWith(github.ref, 'refs/tags/app-v')
     needs: [windows, linux, android, macos, ios]
     runs-on: ubuntu-latest
