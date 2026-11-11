@@ -1,0 +1,185 @@
+# Builds the arus apps (app/) for Windows, macOS, Linux, Android and iOS.
+#
+# - Every push to main that touches app/: build all of them (a check; the
+#   files are kept as workflow artifacts for a few days).
+# - A tag `app-v<version>` (e.g. app-v1.1.0): also publish a GitHub release
+#   with the files the site's Download page links to
+#   (releases/latest/download/<file>). iOS goes through the App Store instead.
+#
+# Android signing: repository secrets ANDROID_KEYSTORE_BASE64 (the .jks,
+# base64), ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+# Releases refuse to build without them, so every published APK has the same
+# key (phones only update an app signed with the key it was installed with).
+
+name: apps
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/apps.yml"]
+    tags: ["app-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.47.9"
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.v.outputs.name }}
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/app-v* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/app-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=1.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter build windows --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath arus-windows.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arus-windows
+          path: app/arus-windows.zip
+          retention-days: 7
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter build linux --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
+      - name: Pack
+        run: |
+          mkdir -p dist
+          cp -r build/linux/x64/release/bundle dist/arus
+          tar czf arus-linux-x64.tar.gz -C dist arus
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arus-linux
+          path: app/arus-linux-x64.tar.gz
+          retention-days: 7
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Release key
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/arus.jks"
+            echo "ARUS_ANDROID_KEYSTORE=$RUNNER_TEMP/arus.jks" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set: a release APK needs the release key."
+            exit 1
+          else
+            echo "::warning::No release key: this test APK is signed with a debug key."
+          fi
+      - run: flutter build apk --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
+        env:
+          ARUS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ARUS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ARUS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - run: cp build/app/outputs/flutter-apk/app-release.apk arus-android.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arus-android
+          path: app/arus-android.apk
+          retention-days: 7
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter build macos --release --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
+      - run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/arus.app arus-macos.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arus-macos
+          path: app/arus-macos.zip
+          retention-days: 7
+
+  # A compile check only: the App Store build is signed with the Apple
+  # developer account and uploaded from Xcode (or a later CI step).
+  ios:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter build ios --release --no-codesign --build-name ${{ needs.version.outputs.name }} --build-number ${{ github.run_number }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    needs: [windows, linux, android, macos, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: files
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" files/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "arus apps ${GITHUB_REF_NAME#app-v}" \
+            --notes "arus for Windows, macOS, Linux and Android. Get it from the Download page on https://arus.online-app.xyz (it has the install steps). The apps show the live site, so they rarely need updating."

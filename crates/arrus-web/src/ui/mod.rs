@@ -420,7 +420,7 @@ impl App {
                             }
                         }
                         // Not inside the Windows app itself.
-                        if !web::in_windows_app()
+                        if !web::in_app()
                             && ui
                                 .add(egui::Button::selectable(self.screen == Screen::Download, "Download"))
                                 .on_hover_text("arus for Windows")
@@ -540,6 +540,11 @@ impl App {
                         ui.close();
                     }
                 }
+            }
+            // Phones get the apps from here (the top bar has no room).
+            if compact && !web::in_app() && ui.button("Download the app").clicked() {
+                goto = Some(Screen::Download);
+                ui.close();
             }
             if ui.button("Settings…").clicked() {
                 settings::open(self);

@@ -197,13 +197,86 @@ pub fn toggle_fullscreen() {
     }
 }
 
-/// Running inside the arus Windows app (Edge WebView2 exposes `chrome.webview`).
-pub fn in_windows_app() -> bool {
-    js_sys::Reflect::get(&window().into(), &JsValue::from_str("chrome"))
-        .ok()
-        .filter(|c| c.is_object())
-        .and_then(|c| js_sys::Reflect::get(&c, &JsValue::from_str("webview")).ok())
-        .is_some_and(|w| w.is_object())
+// The arus apps (app/ in the repository) show this page in a webview. On
+// Android, iOS and macOS the webview neither downloads nor (macOS) opens file
+// pickers, so the page hands those to the app through its `ArusApp` channel;
+// see app/lib/webkit_view.dart for the messages.
+#[wasm_bindgen(inline_js = r#"
+export function app_bridge() {
+  const a = window.ArusApp;
+  return !!a && typeof a.postMessage === 'function';
+}
+export function in_app() {
+  return !!(window.chrome && window.chrome.webview) || app_bridge() || navigator.userAgent.includes('arus-app');
+}
+export async function app_save(url) {
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const cd = r.headers.get('Content-Disposition') || '';
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  const plain = /filename="([^"]+)"/i.exec(cd);
+  const name = star ? decodeURIComponent(star[1]) : plain ? plain[1] : 'arus';
+  const blob = await r.blob();
+  const data = await new Promise((ok, err) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+    fr.onerror = () => err(fr.error);
+    fr.readAsDataURL(blob);
+  });
+  window.ArusApp.postMessage(JSON.stringify({ type: 'save', name, mime: blob.type || 'application/octet-stream', data }));
+}
+export function app_picks() {
+  return window.arusAppPicks === true && app_bridge();
+}
+let nextPick = 1;
+const picks = new Map();
+export function app_pick(accept, multiple, done) {
+  const id = nextPick++;
+  picks.set(id, done);
+  window.arusAppPicked = (id, files) => {
+    const f = picks.get(id);
+    picks.delete(id);
+    if (!f) return;
+    f(files.map((x) => {
+      const bin = atob(x.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new File([bytes], x.name, { type: x.type || '' });
+    }));
+  };
+  window.ArusApp.postMessage(JSON.stringify({ type: 'pick', id, accept, multiple }));
+}
+export function device_os() {
+  const ua = navigator.userAgent;
+  if (/android/i.test(ua)) return 'android';
+  // iPads report a Mac; they have a touch screen.
+  if (/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+  if (/windows/i.test(ua)) return 'windows';
+  if (/macintosh|mac os x/i.test(ua)) return 'macos';
+  if (/linux|x11|cros/i.test(ua)) return 'linux';
+  return '';
+}
+"#)]
+extern "C" {
+    fn app_bridge() -> bool;
+    #[wasm_bindgen(js_name = in_app)]
+    fn js_in_app() -> bool;
+    #[wasm_bindgen(catch)]
+    async fn app_save(url: &str) -> Result<JsValue, JsValue>;
+    fn app_picks() -> bool;
+    fn app_pick(accept: &str, multiple: bool, done: &JsValue);
+    #[wasm_bindgen(js_name = device_os)]
+    fn js_device_os() -> String;
+}
+
+/// Running inside one of the arus apps (not a browser).
+pub fn in_app() -> bool {
+    js_in_app()
+}
+
+/// The visitor's system: "windows", "macos", "linux", "android", "ios" or "".
+pub fn device_os() -> String {
+    js_device_os()
 }
 
 /// Opened from the home screen as an app (no browser bars to hide).
@@ -338,6 +411,16 @@ pub fn random_uuid() -> String {
 
 /// Open the browser's file picker. `on_pick` runs only if files were chosen.
 pub fn pick_files(accept: &str, multiple: bool, on_pick: impl FnOnce(Vec<File>) + 'static) {
+    if app_picks() {
+        let done = Closure::once_into_js(move |list: js_sys::Array| {
+            let files: Vec<File> = list.iter().filter_map(|v| v.dyn_into::<File>().ok()).collect();
+            if !files.is_empty() {
+                on_pick(files);
+            }
+        });
+        app_pick(accept, multiple, &done);
+        return;
+    }
     let doc = document();
     // Drop a picker left over from a cancelled dialog.
     if let Some(old) = PICKER.with(|p| p.borrow_mut().take()) {
@@ -378,6 +461,15 @@ pub fn pick_files(accept: &str, multiple: bool, on_pick: impl FnOnce(Vec<File>) 
 /// Download a same-origin URL (served with `Content-Disposition: attachment`)
 /// without leaving the page.
 pub fn download(url: &str) {
+    if app_bridge() {
+        let url = url.to_owned();
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(e) = app_save(&url).await {
+                web_sys::console::error_1(&JsValue::from_str(&format!("download {url}: {}", js_err(e))));
+            }
+        });
+        return;
+    }
     let doc = document();
     if let Ok(a) = doc.create_element("a").and_then(|e| e.dyn_into::<HtmlAnchorElement>().map_err(Into::into)) {
         a.set_href(url);
