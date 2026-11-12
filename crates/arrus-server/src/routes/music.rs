@@ -20,7 +20,7 @@ use super::{check_content_length, upload_filename};
 use crate::activity::Kind;
 use crate::auth::Auth;
 use crate::error::{Error, Result};
-use crate::{AppState, storage};
+use crate::{AppState, db, storage};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Range {
@@ -146,6 +146,7 @@ pub async fn put(
     state
         .db(move |s, conn| {
             let meta = writable(conn, &user, id)?;
+            db::ensure_music_room(conn, meta.team_id, meta.music_bytes, announced.unwrap_or(1))?;
             if let Some(n) = announced {
                 storage::ensure_fits(s, conn, meta.music_bytes, n)?;
             }
@@ -167,6 +168,7 @@ pub async fn put(
     let res = state
         .db(move |s, conn| {
             let meta = writable(conn, &auth.user, id)?;
+            db::ensure_music_room(conn, meta.team_id, meta.music_bytes, written)?;
             storage::ensure_fits(s, conn, meta.music_bytes, written)?;
             conn.execute(
                 "UPDATE choreographies SET music_file = ?1, music_filename = ?2, music_content_type = ?3, \

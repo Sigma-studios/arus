@@ -78,6 +78,8 @@ pub struct Editor {
     pub drag: Option<stage::Drag>,
     pub easing: Easing,
     pub can_edit: bool,
+    /// The team's plan allows music (free plan: no).
+    pub music_allowed: bool,
     /// The server says this account may change this choreography.
     pub may_write: bool,
     pub compact: bool,
@@ -183,6 +185,7 @@ impl Editor {
             drag: None,
             easing: Easing::Linear,
             can_edit: false,
+            music_allowed: true,
             may_write,
             compact,
             scrubbing: false,
@@ -724,7 +727,17 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     if ed.compact {
         tool_row(ed, app, ui);
     }
+    ed.music_allowed = app.music_allowed(ed.summary.team_id);
     match timeline_ui::show(ed, ui) {
+        Some(timeline_ui::MusicAction::Premium) => {
+            app.alert = Some(super::Alert {
+                title: "Music is a Premium feature".into(),
+                text: "This team is on the free plan, so music can't be added to its choreographies. \
+                       Premium teams get their music in every formation."
+                    .into(),
+                premium: app.on_free_plan(),
+            });
+        }
         Some(timeline_ui::MusicAction::Upload) => upload_music(ed, app),
         Some(timeline_ui::MusicAction::Remove) => ed.modal = Some(EdModal::RemoveMusic),
         None => {}

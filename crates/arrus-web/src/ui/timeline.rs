@@ -10,6 +10,8 @@ use crate::{edit, theme, util};
 pub enum MusicAction {
     Upload,
     Remove,
+    /// Music is not part of the team's plan: say so.
+    Premium,
 }
 
 const NO_MUSIC_EXPORT: &str = "The ArrangeUs phone app doesn't export music, so upload the track here. \
@@ -67,12 +69,20 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
                             if ui.add_enabled(!ed.music_busy, egui::Button::new("Remove")).clicked() {
                                 action = Some(MusicAction::Remove);
                             }
-                            if ui.add_enabled(!ed.music_busy, egui::Button::new("Replace…")).on_hover_text(NO_MUSIC_EXPORT).clicked() {
+                            if ed.music_allowed
+                                && ui.add_enabled(!ed.music_busy, egui::Button::new("Replace…")).on_hover_text(NO_MUSIC_EXPORT).clicked()
+                            {
                                 action = Some(MusicAction::Upload);
                             }
                             music_label(ui, &m.filename, m.bytes);
                         }
                         (Some(m), false) => music_label(ui, &m.filename, m.bytes),
+                        (None, true) if !ed.music_allowed => {
+                            let label = RichText::new("♪ Music · Premium").color(theme::accent());
+                            if ui.button(label).on_hover_text("Music is part of the Premium plan").clicked() {
+                                action = Some(MusicAction::Premium);
+                            }
+                        }
                         (None, true) => {
                             if ui.add_enabled(!ed.music_busy, egui::Button::new("♪ Add music…")).clicked() {
                                 action = Some(MusicAction::Upload);

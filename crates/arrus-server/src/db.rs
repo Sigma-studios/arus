@@ -284,20 +284,58 @@ pub fn team_exists(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
     Ok(conn.query_row("SELECT 1 FROM teams WHERE id = ?1", [id], |_| Ok(())).optional()?.is_some())
 }
 
-/// How many choreographies the team may hold: `None` = unlimited (a team
-/// made by the admin, or owned by a premium or admin account).
-pub fn choreography_limit(conn: &Connection, team_id: i64) -> rusqlite::Result<Option<u32>> {
-    let owner: Option<(bool, bool)> = conn
+/// The plan a team falls under: its owner's (`None`: no owner, made by the
+/// master admin: unlimited), and the owner's id.
+pub fn team_plan(conn: &Connection, team_id: i64) -> rusqlite::Result<(Option<i64>, arrus_api::PlanLimits)> {
+    let owner: Option<(i64, bool, bool)> = conn
         .query_row(
-            "SELECT a.is_premium, a.is_admin FROM teams t JOIN accounts a ON a.id = t.owner_id WHERE t.id = ?1",
+            "SELECT a.id, a.is_premium, a.is_admin FROM teams t JOIN accounts a ON a.id = t.owner_id WHERE t.id = ?1",
             [team_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     Ok(match owner {
-        Some((false, false)) => Some(arrus_api::FREE_CHOREOGRAPHIES),
-        _ => None,
+        Some((id, premium, admin)) => (Some(id), arrus_api::PlanLimits::of(premium, admin)),
+        None => (None, arrus_api::PlanLimits::UNLIMITED),
     })
+}
+
+/// How many choreographies the team may hold: `None` = unlimited.
+pub fn choreography_limit(conn: &Connection, team_id: i64) -> rusqlite::Result<Option<u32>> {
+    Ok(team_plan(conn, team_id)?.1.choreographies_per_team)
+}
+
+/// Music in all the teams `owner` owns.
+pub fn music_used(conn: &Connection, owner: i64) -> rusqlite::Result<u64> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(c.music_bytes), 0) FROM choreographies c JOIN teams t ON t.id = c.team_id WHERE t.owner_id = ?1",
+        [owner],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n as u64)
+}
+
+/// Fail with 403 `limit_music` (the plan has no music) or `limit_music_storage`
+/// if a track of `adding` bytes, replacing one of `replacing`, does not fit.
+pub fn ensure_music_room(conn: &Connection, team_id: i64, replacing: u64, adding: u64) -> crate::error::Result<()> {
+    let (owner, plan) = team_plan(conn, team_id)?;
+    let (Some(owner), Some(limit)) = (owner, plan.music_bytes) else { return Ok(()) };
+    if limit == 0 {
+        return Err(crate::error::Error::with_code(
+            axum::http::StatusCode::FORBIDDEN,
+            "limit_music",
+            "music is a premium feature: this team is on the free plan",
+        ));
+    }
+    let used = music_used(conn, owner)?.saturating_sub(replacing);
+    if used + adding > limit {
+        return Err(crate::error::Error::with_code(
+            axum::http::StatusCode::FORBIDDEN,
+            "limit_music_storage",
+            format!("the music storage of this plan is full ({} MB)", limit / (1024 * 1024)),
+        ));
+    }
+    Ok(())
 }
 
 pub fn choreography_count(conn: &Connection, team_id: i64) -> rusqlite::Result<u32> {
@@ -313,7 +351,7 @@ pub fn ensure_choreography_room(conn: &Connection, team_id: i64, adding: u32) ->
         return Err(crate::error::Error::with_code(
             axum::http::StatusCode::FORBIDDEN,
             "limit_choreographies",
-            format!("a team of a free account holds at most {limit} choreographies (premium: unlimited)"),
+            format!("a team on this plan holds at most {limit} choreographies"),
         ));
     }
     Ok(())

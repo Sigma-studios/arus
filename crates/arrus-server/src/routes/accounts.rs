@@ -2,7 +2,7 @@
 //! admin's list of every account.
 
 use arrus_api::{
-    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, FREE_TEAMS, MIN_PASSWORD_LEN, Me, MyTeam,
+    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, MIN_PASSWORD_LEN, Me, MyTeam, PlanLimits,
     NICKNAME_CHANGE_INTERVAL, Role, TeamRole, UpdateAccount, UpdateMe, UserPrefs,
 };
 use axum::Json;
@@ -159,21 +159,29 @@ fn my_teams(conn: &Connection, account_id: i64) -> Result<Vec<MyTeam>> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.name, m.role, a.nickname, \
          (SELECT COUNT(*) FROM choreographies c WHERE c.team_id = t.id), \
-         t.owner_id IS NOT NULL AND NOT a.is_premium AND NOT a.is_admin \
+         t.owner_id, a.is_premium, a.is_admin, \
+         (SELECT COALESCE(SUM(c.music_bytes), 0) FROM choreographies c JOIN teams o ON o.id = c.team_id \
+          WHERE o.owner_id = t.owner_id) \
          FROM team_members m JOIN teams t ON t.id = m.team_id LEFT JOIN accounts a ON a.id = t.owner_id \
          WHERE m.account_id = ?1 ORDER BY t.name COLLATE NOCASE, t.id",
     )?;
     let teams = stmt
         .query_map([account_id], |r| {
             let role: String = r.get(2)?;
-            let limited: Option<bool> = r.get(5)?;
+            let owner: Option<i64> = r.get(5)?;
+            let plan = match (owner, r.get::<_, Option<bool>>(6)?, r.get::<_, Option<bool>>(7)?) {
+                (Some(_), Some(p), Some(a)) => PlanLimits::of(p, a),
+                _ => PlanLimits::UNLIMITED,
+            };
             Ok(MyTeam {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 role: TeamRole::parse(&role).unwrap_or(TeamRole::Guest),
                 owner: r.get(3)?,
                 choreography_count: r.get::<_, i64>(4)? as u32,
-                choreography_limit: limited.unwrap_or(false).then_some(arrus_api::FREE_CHOREOGRAPHIES),
+                choreography_limit: plan.choreographies_per_team,
+                music_limit: plan.music_bytes,
+                music_used: if owner.is_some() { r.get::<_, i64>(8)? as u64 } else { 0 },
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -194,6 +202,9 @@ fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
             premium: true,
             teams: Vec::new(),
             can_create_team: true,
+            limits: PlanLimits::UNLIMITED,
+            teams_owned: 0,
+            music_used: 0,
             nickname_change_from: None,
             prefs: admin_prefs(conn)?,
         });
@@ -205,6 +216,7 @@ fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
     let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
+    let limits = PlanLimits::of(a.is_premium, a.is_admin);
     Ok(Me {
         username: a.nickname.clone(),
         role: if a.is_admin { Role::Admin } else { Role::Member },
@@ -215,7 +227,10 @@ fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
         mail,
         premium: a.is_premium,
         teams: my_teams(conn, a.id)?,
-        can_create_team: a.is_admin || a.is_premium || (owned as u32) < FREE_TEAMS,
+        can_create_team: limits.teams.is_none_or(|l| (owned as u32) < l),
+        limits,
+        teams_owned: owned as u32,
+        music_used: db::music_used(conn, a.id)?,
         nickname_change_from: nickname_change_from(changed_at, db::now()),
         prefs: parse_prefs(prefs.as_deref()),
     })

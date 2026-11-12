@@ -10,6 +10,7 @@ mod inspector;
 mod library;
 mod live;
 mod motion;
+mod premium;
 mod net;
 mod settings;
 mod stage;
@@ -19,7 +20,7 @@ mod timeline;
 mod update;
 mod widgets;
 
-use arrus_api::{CreateTeam, FREE_CHOREOGRAPHIES, FREE_TEAMS, Me, MyTeam, Role, Storage, Team, TeamId, TeamRole};
+use arrus_api::{CreateTeam, Me, MyTeam, PREMIUM_CHOREOGRAPHIES, PREMIUM_TEAMS, Role, Storage, Team, TeamId, TeamRole};
 use egui::{Align, Align2, Frame, Id, Layout, Margin, RichText, Stroke, Ui, vec2};
 
 use crate::util::{self, Level};
@@ -39,6 +40,8 @@ pub enum Screen {
     Stats,
     /// The Windows app.
     Download,
+    /// Free and premium side by side.
+    Premium,
     Editor,
 }
 
@@ -51,6 +54,7 @@ impl Screen {
             Screen::Accounts => Some("accounts"),
             Screen::Stats => Some("stats"),
             Screen::Download => Some("download"),
+            Screen::Premium => Some("premium"),
             Screen::Library | Screen::Editor => None,
         }
     }
@@ -71,6 +75,8 @@ struct Toast {
 pub struct Alert {
     pub title: String,
     pub text: String,
+    /// Offer a way to the Premium tab.
+    pub premium: bool,
 }
 
 pub struct App {
@@ -171,6 +177,7 @@ impl App {
                         Some("stats") if admin => self.go(Screen::Stats),
                         Some("team") if self.team.is_some() => self.go(Screen::Team),
                         Some("download") => self.go(Screen::Download),
+                        Some("premium") => self.go(Screen::Premium),
                         _ => web::set_hash_screen(None),
                     }
                 }
@@ -240,6 +247,29 @@ impl App {
             Some(t) => t.choreography_limit,
             None => self.teams.iter().find(|t| t.id == id).and_then(|t| t.choreography_limit),
         }
+    }
+
+    /// A logged-in account on the free plan (sees the Premium tab).
+    pub fn on_free_plan(&self) -> bool {
+        self.me.as_ref().is_some_and(|m| m.account_id.is_some() && !m.premium && m.role != Role::Admin)
+    }
+
+    /// The current team's choreography limit and music limit.
+    fn current_team_limits(&self) -> Option<(Option<u32>, Option<u64>)> {
+        let id = self.team?;
+        if let Some(t) = self.my_teams().iter().find(|t| t.id == id) {
+            return Some((t.choreography_limit, t.music_limit));
+        }
+        self.teams.iter().find(|t| t.id == id).map(|t| (t.choreography_limit, t.music_limit))
+    }
+
+    /// Whether music may be added to the team's choreographies (`false`: free plan).
+    pub fn music_allowed(&self, team: TeamId) -> bool {
+        let limit = match self.my_teams().iter().find(|t| t.id == team) {
+            Some(t) => t.music_limit,
+            None => self.teams.iter().find(|t| t.id == team).and_then(|t| t.music_limit),
+        };
+        limit != Some(0)
     }
 
     /// Teams to switch between: all of them for the admin.
@@ -330,19 +360,47 @@ impl App {
                     text: "The server has no room left for choreographies and music. Delete old \
                            choreographies or music tracks (or ask the admin to), then try again."
                         .into(),
+                    premium: false,
                 });
                 self.refresh_storage();
             }
             ApiError::Http { code: Some(c), .. } if c.starts_with("limit_") => {
-                let text = if c == "limit_teams" {
-                    format!("A free account can create {FREE_TEAMS} team. Premium accounts can create as many as they like.")
-                } else {
-                    format!(
-                        "A team of a free account holds {FREE_CHOREOGRAPHIES} choreographies. Delete one first, \
-                         or ask for premium (unlimited)."
-                    )
+                let free = self.on_free_plan();
+                let team = self.current_team_limits();
+                let (title, text) = match c.as_str() {
+                    "limit_teams" if free => (
+                        "Free plan limit",
+                        format!("The free plan includes 1 team. Premium accounts can create up to {PREMIUM_TEAMS}."),
+                    ),
+                    "limit_teams" => {
+                        ("Team limit", format!("An account can create up to {PREMIUM_TEAMS} teams. Delete one you no longer use first."))
+                    }
+                    "limit_music" => (
+                        "Music is a Premium feature",
+                        "This team is on the free plan, so music can't be added to its choreographies.".to_owned(),
+                    ),
+                    "limit_music_storage" => (
+                        "Music storage is full",
+                        format!(
+                            "The music of this team's owner already takes {}. Remove the music of a choreography \
+                             you no longer need, then try again.",
+                            team.and_then(|t| t.1).map(util::fmt_bytes).unwrap_or_else(|| "all the room".into())
+                        ),
+                    ),
+                    _ => {
+                        let limit = team.and_then(|t| t.0);
+                        let n = limit.map(|l| l.to_string()).unwrap_or_else(|| "its maximum of".into());
+                        let more = if limit.is_some_and(|l| l < PREMIUM_CHOREOGRAPHIES) {
+                            format!(" Premium teams hold up to {PREMIUM_CHOREOGRAPHIES}.")
+                        } else {
+                            String::new()
+                        };
+                        ("Choreography limit", format!("This team holds {n} choreographies. Delete one first.{more}"))
+                    }
                 };
-                self.alert = Some(Alert { title: "Free account limit".into(), text });
+                // Only free accounts can do something about it on the Premium tab.
+                let premium = free && c != "limit_music_storage";
+                self.alert = Some(Alert { title: title.into(), text, premium });
                 self.reload_me();
             }
             e => self.toast_error(e.to_string()),
@@ -384,6 +442,7 @@ impl App {
             }
             Screen::Accounts => accounts::load(self),
             Screen::Stats => stats::load(self),
+            Screen::Premium => self.reload_me(),
             Screen::Download | Screen::Editor => {}
         }
     }
@@ -446,6 +505,9 @@ impl App {
                                 .clicked()
                         {
                             self.go(Screen::Download);
+                        }
+                        if self.on_free_plan() && premium_tab(ui, self.screen == Screen::Premium).clicked() {
+                            self.go(Screen::Premium);
                         }
                         ui.add_space(8.0);
                     }
@@ -564,6 +626,10 @@ impl App {
                     }
                 }
             }
+            if compact && self.on_free_plan() && ui.button(RichText::new("★ Premium").color(theme::accent()).strong()).clicked() {
+                goto = Some(Screen::Premium);
+                ui.close();
+            }
             // Phones get the apps from here (the top bar has no room).
             if compact && !web::in_app() && ui.button("Download the app").clicked() {
                 goto = Some(Screen::Download);
@@ -663,18 +729,29 @@ impl App {
 
     fn alerts_ui(&mut self, ctx: &egui::Context) {
         if let Some(a) = &self.alert {
-            let (title, text) = (a.title.clone(), a.text.clone());
+            let (title, text, premium) = (a.title.clone(), a.text.clone(), a.premium);
+            let mut see_premium = false;
             let r = egui::Modal::new(Id::unique("alert")).show(ctx, |ui| {
                 widgets::fit_modal(ui, 420.0);
                 ui.heading(title);
                 ui.add_space(8.0);
                 ui.label(text);
                 ui.add_space(12.0);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| widgets::primary_button(ui, "OK").clicked())
-                    .inner
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if premium {
+                        see_premium = widgets::primary_button(ui, "See Premium").clicked();
+                        ui.button("OK").clicked() || see_premium
+                    } else {
+                        widgets::primary_button(ui, "OK").clicked()
+                    }
+                })
+                .inner
             });
             if r.inner || r.should_close() {
                 self.alert = None;
+            }
+            if see_premium {
+                self.go(Screen::Premium);
             }
         }
         if let Some(to) = self.leave_to {
@@ -693,6 +770,16 @@ impl App {
             }
         }
     }
+}
+
+/// The Premium tab: the accent colour filled, the text in the panel colour
+/// (the other tabs the other way round), so it stands out.
+fn premium_tab(ui: &mut Ui, selected: bool) -> egui::Response {
+    let fill = theme::accent();
+    let text = RichText::new("★ Premium").strong().color(theme::on_color(fill));
+    let stroke = if selected { Stroke::new(2.0, theme::TEXT) } else { Stroke::NONE };
+    ui.add(egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(6))
+        .on_hover_text("Free and Premium side by side")
 }
 
 fn storage_meter(ui: &mut Ui, s: &Storage) {
@@ -768,6 +855,7 @@ impl eframe::App for App {
             Screen::Accounts => accounts::show(self, ui),
             Screen::Stats => stats::show(self, ui),
             Screen::Download => download::show(self, ui),
+            Screen::Premium => premium::show(self, ui),
             Screen::Editor => {
                 if let Some(mut ed) = self.editor.take() {
                     editor::show(&mut ed, self, ui);

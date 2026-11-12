@@ -199,7 +199,7 @@ fn welcome(app: &mut App, ui: &mut Ui) {
                 if !me.premium {
                     ui.label(
                         RichText::new(format!(
-                            "Free accounts: {} team with up to {} choreographies.",
+                            "Free plan: {} team with up to {} choreographies, no music. See the Premium tab for more.",
                             arrus_api::FREE_TEAMS,
                             arrus_api::FREE_CHOREOGRAPHIES
                         ))
@@ -226,10 +226,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let limit = app.choreography_limit();
     let full = limit.is_some_and(|l| app.library.loaded_for.is_some() && app.library.items.len() as u32 >= l);
-    let full_tip = format!(
-        "This team is on the free plan: {} choreographies at most. Delete one, or ask for premium (unlimited).",
-        limit.unwrap_or(0)
-    );
+    let full_tip = if limit.is_some_and(|l| l < arrus_api::PREMIUM_CHOREOGRAPHIES) {
+        format!(
+            "This team is on the free plan: {} choreographies at most. Delete one first. Premium teams hold up to {}.",
+            limit.unwrap_or(0),
+            arrus_api::PREMIUM_CHOREOGRAPHIES
+        )
+    } else {
+        format!("This team holds {} choreographies at most. Delete one first.", limit.unwrap_or(0))
+    };
 
     egui::CentralPanel::default()
         .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))

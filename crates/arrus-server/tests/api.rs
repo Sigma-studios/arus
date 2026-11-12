@@ -1658,3 +1658,61 @@ async fn notices_for_email_password_and_deletion() {
     // HTML too, with the nickname escaped into it
     assert!(last.html.contains("Your account was deleted") && last.html.contains("Hi bob"));
 }
+
+#[tokio::test]
+async fn plan_limits_teams_choreographies_music() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let free = t.signup("free", "free@example.com", "correct horse").await;
+    let audio: Vec<u8> = vec![7; 4000];
+    let put_music = |cookie: String, id: ChoreographyId| {
+        let audio = audio.clone();
+        let t = &t;
+        async move {
+            t.raw(Method::PUT, &format!("/api/choreographies/{id}/music"), &cookie, &[("content-type", "audio/mpeg")], audio).await
+        }
+    };
+
+    // free: 1 team, 2 choreographies, no music
+    let me = t.me(&free).await;
+    assert_eq!(me.limits, PlanLimits::FREE);
+    let team: Team = t.call(Method::POST, "/api/teams", Some(&free), Some(CreateTeam { name: "Mine".into() })).await.json();
+    assert_eq!(team.choreography_limit, Some(FREE_CHOREOGRAPHIES));
+    assert_eq!(team.music_limit, Some(0));
+    let r = t.call(Method::POST, "/api/teams", Some(&free), Some(CreateTeam { name: "Two".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("limit_teams"));
+    let s: ChoreographySummary = t.create(&free, Some(team.id), sample()).await.json();
+    let r = put_music(free.clone(), s.id).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.error().code.as_deref(), Some("limit_music"));
+
+    // premium: music up to the storage, 20 teams
+    let id = me.account_id.unwrap();
+    let body = UpdateAccount { is_premium: Some(true), ..Default::default() };
+    assert_eq!(t.call(Method::PATCH, &format!("/api/accounts/{id}"), Some(&admin), Some(body)).await.status, StatusCode::OK);
+    let me = t.me(&free).await;
+    assert_eq!(me.limits, PlanLimits::PREMIUM);
+    assert_eq!(me.teams[0].choreography_limit, Some(PREMIUM_CHOREOGRAPHIES));
+    let r = put_music(free.clone(), s.id).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(t.me(&free).await.music_used, 4000);
+    // another track of the same account fills the storage: the next upload is refused
+    let s2: ChoreographySummary = t.create(&free, Some(team.id), sample()).await.json();
+    {
+        let conn = rusqlite::Connection::open(t.dir.path().join("arus.db")).unwrap();
+        conn.execute("UPDATE choreographies SET music_bytes = ?1 WHERE id = ?2", rusqlite::params![(PREMIUM_MUSIC_BYTES - 3000) as i64, s.id])
+            .unwrap();
+    }
+    let r = put_music(free.clone(), s2.id).await;
+    assert_eq!(r.error().code.as_deref(), Some("limit_music_storage"));
+    // replacing a track only counts the difference
+    assert_eq!(put_music(free.clone(), s.id).await.status, StatusCode::OK);
+
+    for i in 1..PREMIUM_TEAMS {
+        let r = t.call(Method::POST, "/api/teams", Some(&free), Some(CreateTeam { name: format!("T{i}") })).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    assert!(!t.me(&free).await.can_create_team);
+    let r = t.call(Method::POST, "/api/teams", Some(&free), Some(CreateTeam { name: "One too many".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("limit_teams"));
+}

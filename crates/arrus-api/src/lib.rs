@@ -70,7 +70,8 @@
 //! "Team readers" = the admin, or anyone in the choreography's team.
 //! An account in exactly one team may leave the team out (`team_id` / `?team=`).
 //! Creating a choreography in a team owned by a free account fails with 403
-//! `limit_choreographies` past [`FREE_CHOREOGRAPHIES`].
+//! `limit_choreographies` past its plan's limit ([`PlanLimits`]); uploading
+//! music fails with 403 `limit_music` (free plan) or `limit_music_storage`.
 
 pub mod patch;
 
@@ -146,6 +147,45 @@ impl TeamRole {
 pub const FREE_TEAMS: u32 = 1;
 /// Choreographies a team owned by a free account may hold.
 pub const FREE_CHOREOGRAPHIES: u32 = 2;
+/// Teams a premium account may create (a guard against abuse, not a selling point).
+pub const PREMIUM_TEAMS: u32 = 20;
+/// Choreographies a team owned by a premium account may hold.
+pub const PREMIUM_CHOREOGRAPHIES: u32 = 20;
+/// Music a premium account's teams may hold together.
+pub const PREMIUM_MUSIC_BYTES: u64 = 250 * 1024 * 1024;
+
+/// What an account (and the teams it owns) may hold. `None`: unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PlanLimits {
+    pub teams: Option<u32>,
+    pub choreographies_per_team: Option<u32>,
+    /// Music in all the teams it owns together; `Some(0)`: no music.
+    pub music_bytes: Option<u64>,
+}
+
+impl PlanLimits {
+    pub const FREE: PlanLimits =
+        PlanLimits { teams: Some(FREE_TEAMS), choreographies_per_team: Some(FREE_CHOREOGRAPHIES), music_bytes: Some(0) };
+    pub const PREMIUM: PlanLimits = PlanLimits {
+        teams: Some(PREMIUM_TEAMS),
+        choreographies_per_team: Some(PREMIUM_CHOREOGRAPHIES),
+        music_bytes: Some(PREMIUM_MUSIC_BYTES),
+    };
+    /// Admins, and teams the master admin made.
+    pub const UNLIMITED: PlanLimits = PlanLimits { teams: None, choreographies_per_team: None, music_bytes: None };
+
+    pub fn of(is_premium: bool, is_admin: bool) -> PlanLimits {
+        match (is_premium, is_admin) {
+            (_, true) => PlanLimits::UNLIMITED,
+            (true, false) => PlanLimits::PREMIUM,
+            (false, false) => PlanLimits::FREE,
+        }
+    }
+
+    pub fn music_allowed(&self) -> bool {
+        self.music_bytes != Some(0)
+    }
+}
 
 /// Who is logged in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,6 +210,14 @@ pub struct Me {
     pub teams: Vec<MyTeam>,
     /// May create another team (free accounts: [`FREE_TEAMS`]).
     pub can_create_team: bool,
+    /// This account's plan (the master admin: unlimited).
+    #[serde(default)]
+    pub limits: PlanLimits,
+    /// Teams it owns, and the music in them.
+    #[serde(default)]
+    pub teams_owned: u32,
+    #[serde(default)]
+    pub music_used: u64,
     /// Unix seconds from when the nickname may be changed again (`None`: now).
     #[serde(default)]
     pub nickname_change_from: Option<i64>,
@@ -237,8 +285,14 @@ pub struct MyTeam {
     /// The owner's nickname (`None`: a team made by the admin).
     pub owner: Option<String>,
     pub choreography_count: u32,
-    /// `None`: unlimited (premium or admin-made team).
+    /// `None`: unlimited (an admin's or admin-made team).
     pub choreography_limit: Option<u32>,
+    /// Music the owner's teams may hold together (`Some(0)`: none, `None`: unlimited).
+    #[serde(default)]
+    pub music_limit: Option<u64>,
+    /// Music in the owner's teams now.
+    #[serde(default)]
+    pub music_used: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,6 +306,11 @@ pub struct Team {
     pub choreography_limit: Option<u32>,
     /// Choreographies + music of this team.
     pub bytes_used: u64,
+    /// As in [`MyTeam`].
+    #[serde(default)]
+    pub music_limit: Option<u64>,
+    #[serde(default)]
+    pub music_used: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -584,7 +643,7 @@ pub struct ApiError {
     pub error: String,
     /// Machine-readable reason when useful: `storage_full`, `username_taken`,
     /// `email_taken`, `name_taken`, `no_such_account`, `limit_teams`,
-    /// `limit_choreographies`, `wrong_password`, `not_arrus`, `too_big`,
+    /// `limit_choreographies`, `limit_music`, `limit_music_storage`, `wrong_password`, `not_arrus`, `too_big`,
     /// `invalid_webhook`, `invalid_mention`, `no_webhook`, `nickname_too_soon`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,

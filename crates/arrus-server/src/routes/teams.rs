@@ -1,7 +1,7 @@
 //! Teams, who is in them (and as what), and their share links.
 
 use arrus_api::{
-    AddTeamMember, CreateInvite, CreateTeam, FREE_TEAMS, Invite, Team, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember,
+    AddTeamMember, CreateInvite, CreateTeam, Invite, PlanLimits, Team, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember,
 };
 use axum::Json;
 use axum::extract::{Path, State};
@@ -18,14 +18,19 @@ const TEAM_SELECT: &str = "SELECT t.id, t.name, t.owner_id, a.nickname, \
      (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id), \
      (SELECT COUNT(*) FROM choreographies c WHERE c.team_id = t.id), \
      (SELECT COALESCE(SUM(c.size_bytes + COALESCE(c.music_bytes, 0)), 0) FROM choreographies c WHERE c.team_id = t.id), \
-     a.is_premium, a.is_admin \
+     a.is_premium, a.is_admin, \
+     (SELECT COALESCE(SUM(c.music_bytes), 0) FROM choreographies c JOIN teams o ON o.id = c.team_id \
+      WHERE o.owner_id = t.owner_id) \
      FROM teams t LEFT JOIN accounts a ON a.id = t.owner_id";
 
 fn team_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     let owner_id: Option<i64> = r.get(2)?;
     let premium: Option<bool> = r.get(7)?;
     let admin: Option<bool> = r.get(8)?;
-    let limited = owner_id.is_some() && premium == Some(false) && admin == Some(false);
+    let plan = match (owner_id, premium, admin) {
+        (Some(_), Some(p), Some(a)) => arrus_api::PlanLimits::of(p, a),
+        _ => arrus_api::PlanLimits::UNLIMITED,
+    };
     Ok(Team {
         id: r.get(0)?,
         name: r.get(1)?,
@@ -33,8 +38,10 @@ fn team_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
         owner: r.get(3)?,
         member_count: r.get::<_, i64>(4)? as u32,
         choreography_count: r.get::<_, i64>(5)? as u32,
-        choreography_limit: limited.then_some(arrus_api::FREE_CHOREOGRAPHIES),
+        choreography_limit: plan.choreographies_per_team,
         bytes_used: r.get::<_, i64>(6)? as u64,
+        music_limit: plan.music_bytes,
+        music_used: if owner_id.is_some() { r.get::<_, i64>(9)? as u64 } else { 0 },
     })
 }
 
@@ -88,15 +95,14 @@ pub async fn create(State(state): State<AppState>, auth: Auth, ApiJson(body): Ap
         .db(move |_, conn| {
             let owner = user.account_id();
             if let User::Account(a) = &user
-                && !a.is_admin
-                && !a.is_premium
+                && let Some(limit) = PlanLimits::of(a.is_premium, a.is_admin).teams
             {
                 let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
-                if owned as u32 >= FREE_TEAMS {
+                if owned as u32 >= limit {
                     return Err(Error::with_code(
                         StatusCode::FORBIDDEN,
                         "limit_teams",
-                        format!("a free account can create {FREE_TEAMS} team (premium: unlimited)"),
+                        format!("an account on this plan can create {limit} team{}", if limit == 1 { "" } else { "s" }),
                     ));
                 }
             }
