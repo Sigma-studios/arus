@@ -139,7 +139,7 @@ fn card(ui: &mut Ui, p: &Platform, this_device: bool) {
             },
             |ui| match (p.file, APP_STORE) {
                 (Some(file), _) => {
-                    if widgets::primary_button(ui, &format!("⬇  {}", p.button)).clicked() {
+                    if widgets::primary_button(ui, p.button).clicked() {
                         ui.ctx().open_url(egui::OpenUrl::same_tab(format!("{RELEASE}{file}")));
                     }
                 }
