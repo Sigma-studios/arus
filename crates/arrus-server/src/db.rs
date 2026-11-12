@@ -108,6 +108,7 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch(ACCOUNTS)?;
     conn.execute_batch(SESSIONS)?;
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(crate::activity::SCHEMA)?;
     add_column(conn, "accounts", "nickname_changed_at", "INTEGER")?;
     add_column(conn, "accounts", "prefs", "TEXT")?;
     conn.pragma_update(None, "foreign_keys", "ON")

@@ -6,6 +6,7 @@ pub use choreographies::Stored;
 mod me;
 mod music;
 mod settings;
+pub mod stats;
 pub mod teams;
 mod transfer;
 
@@ -56,6 +57,8 @@ pub fn router(state: AppState) -> Router {
         .route("/choreographies/{id}/export", get(transfer::export))
         .route("/choreographies/{id}/pdf", get(transfer::pdf))
         .route("/choreographies/{id}/music", get(music::get).put(music::put).delete(music::delete))
+        .route("/stats", get(stats::site))
+        .route("/stats/accounts/{id}", get(stats::account))
         .route("/settings/alerts", get(settings::get_alerts).put(settings::update_alerts))
         .route("/settings/alerts/test", post(settings::test_alerts))
         .fallback(api_not_found)

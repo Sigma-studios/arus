@@ -12,6 +12,7 @@ mod motion;
 mod net;
 mod settings;
 mod stage;
+mod stats;
 mod team;
 mod timeline;
 mod update;
@@ -33,6 +34,8 @@ pub enum Screen {
     Admin,
     /// Admin: every account.
     Accounts,
+    /// Admin: usage statistics.
+    Stats,
     /// The Windows app.
     Download,
     Editor,
@@ -45,6 +48,7 @@ impl Screen {
             Screen::Team => Some("team"),
             Screen::Admin => Some("admin"),
             Screen::Accounts => Some("accounts"),
+            Screen::Stats => Some("stats"),
             Screen::Download => Some("download"),
             Screen::Library | Screen::Editor => None,
         }
@@ -81,6 +85,7 @@ pub struct App {
     pub library: library::Library,
     pub admin: admin::Admin,
     pub accounts: accounts::Accounts,
+    pub stats: stats::Stats,
     pub team_ui: team::TeamUi,
     pub account: account::AccountUi,
     pub settings: settings::SettingsUi,
@@ -118,6 +123,7 @@ impl App {
             library: Default::default(),
             admin: Default::default(),
             accounts: Default::default(),
+            stats: Default::default(),
             team_ui: Default::default(),
             account: Default::default(),
             settings: Default::default(),
@@ -158,6 +164,7 @@ impl App {
                     match web::hash_screen().as_deref() {
                         Some("admin") if admin => self.go(Screen::Admin),
                         Some("accounts") if admin => self.go(Screen::Accounts),
+                        Some("stats") if admin => self.go(Screen::Stats),
                         Some("team") if self.team.is_some() => self.go(Screen::Team),
                         Some("download") => self.go(Screen::Download),
                         _ => web::set_hash_screen(None),
@@ -372,6 +379,7 @@ impl App {
                 admin::load_alerts(self);
             }
             Screen::Accounts => accounts::load(self),
+            Screen::Stats => stats::load(self),
             Screen::Download | Screen::Editor => {}
         }
     }
@@ -421,6 +429,9 @@ impl App {
                             }
                             if ui.add(egui::Button::selectable(self.screen == Screen::Accounts, "Accounts")).clicked() {
                                 self.go(Screen::Accounts);
+                            }
+                            if ui.add(egui::Button::selectable(self.screen == Screen::Stats, "Statistics")).clicked() {
+                                self.go(Screen::Stats);
                             }
                         }
                         // Not inside the Windows app itself.
@@ -541,6 +552,10 @@ impl App {
                     }
                     if ui.button("Accounts").clicked() {
                         goto = Some(Screen::Accounts);
+                        ui.close();
+                    }
+                    if ui.button("Statistics").clicked() {
+                        goto = Some(Screen::Stats);
                         ui.close();
                     }
                 }
@@ -744,6 +759,7 @@ impl eframe::App for App {
             Screen::Team => team::show(self, ui),
             Screen::Admin => admin::show(self, ui),
             Screen::Accounts => accounts::show(self, ui),
+            Screen::Stats => stats::show(self, ui),
             Screen::Download => download::show(self, ui),
             Screen::Editor => {
                 if let Some(mut ed) = self.editor.take() {

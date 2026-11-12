@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::choreographies::{readable, summary, writable};
 use super::{check_content_length, upload_filename};
+use crate::activity::Kind;
 use crate::auth::Auth;
 use crate::error::{Error, Result};
 use crate::{AppState, storage};
@@ -174,6 +175,9 @@ pub async fn put(
             )?;
             storage::remove_music_files(s, meta.music_file);
             storage::after_change(s, conn)?;
+            if let Some(a) = auth.user.account_id() {
+                s.activity.add(a, Kind::Uploads, 1);
+            }
             summary(conn, id)
         })
         .await;

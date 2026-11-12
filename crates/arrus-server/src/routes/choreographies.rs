@@ -18,6 +18,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 
 use super::ApiJson;
+use crate::activity::Kind;
 use crate::auth::{Auth, User};
 use crate::error::{Error, Result};
 use crate::{AppState, db, docs, storage};
@@ -144,6 +145,9 @@ pub async fn create(
             storage::ensure_fits(s, conn, 0, stored.size())?;
             let id = insert(conn, team_id, &stored, &by, now)?;
             storage::after_change(s, conn)?;
+            if let Some(a) = auth.user.account_id() {
+                s.activity.add(a, Kind::Created, 1);
+            }
             Ok(Json(summary(conn, id)?))
         })
         .await
@@ -209,6 +213,9 @@ pub async fn save(
                 }));
             }
             let summary = store(s, conn, id, &meta, data, &by)?;
+            if let Some(a) = auth.user.account_id() {
+                s.activity.add(a, Kind::Edits, 1);
+            }
             // Live viewers see a new revision they cannot patch their way to: they reload.
             s.hub.send(id, &LiveEvent::Hello { revision: summary.revision });
             Ok(Json(Saved { summary }))
@@ -241,6 +248,9 @@ async fn live_patch(state: &AppState, user: User, id: i64, session: String, batc
                 return Ok(Saved { summary: docs::summary(s, conn, id)? });
             }
             let summary = docs::apply_patch(s, conn, &meta, &ops, &by)?;
+            if let Some(a) = user.account_id() {
+                s.activity.add(a, Kind::Edits, 1);
+            }
             // Sent under the database lock: viewers get revisions in order.
             s.hub.send(id, &LiveEvent::Patch { revision: summary.revision, session, batch, by, ops });
             Ok(Saved { summary })
@@ -404,6 +414,9 @@ async fn live_socket(state: AppState, auth: Auth, id: i64, session: String, can_
                     Some(Ok(_)) => continue,
                 };
                 let Ok(req) = serde_json::from_str::<LiveRequest>(&text) else { continue };
+                if let Some(a) = auth.user.account_id() {
+                    state.activity.seen(a);
+                }
                 let reply = match req {
                     LiveRequest::Patch { batch, ops } => {
                         // Logged out or removed from the team since the socket opened?

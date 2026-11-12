@@ -10,6 +10,7 @@ use axum::response::{Html, IntoResponse, Response};
 use rust_embed::Embed;
 use serde::Deserialize;
 
+use crate::activity::Kind;
 use crate::auth::{self, Auth, User};
 use crate::error::{Error, Result};
 use crate::routes::{accounts, teams};
@@ -94,7 +95,12 @@ pub async fn login_submit(State(state): State<AppState>, Form(form): Form<LoginF
         .db(move |s, conn| {
             let found = auth::check_login(conn, &s.config.admin_password, &form.username, &form.password)?;
             Ok(match found {
-                Some(account_id) => Some(auth::create_session(conn, account_id)?),
+                Some(account_id) => {
+                    if let Some(id) = account_id {
+                        s.activity.add(id, Kind::Logins, 1);
+                    }
+                    Some(auth::create_session(conn, account_id)?)
+                }
                 None => None,
             })
         })
@@ -175,8 +181,9 @@ pub async fn signup_submit(State(state): State<AppState>, Form(form): Form<Signu
     }
     let password = form.password.clone();
     let created = state
-        .db(move |_, conn| {
+        .db(move |s, conn| {
             let id = accounts::insert_account(conn, &nickname, Some(&email), &password, false)?;
+            s.activity.add(id, Kind::Logins, 1);
             Ok(auth::create_session(conn, Some(id))?)
         })
         .await;

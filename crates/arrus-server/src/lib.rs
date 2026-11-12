@@ -1,5 +1,6 @@
 //! The Eightcount backend: accounts, teams, choreography storage, and the embedded web client.
 
+pub mod activity;
 pub mod alerts;
 pub mod auth;
 pub mod config;
@@ -24,7 +25,7 @@ pub use config::Config;
 use error::{Error, Result};
 
 #[derive(Clone)]
-pub struct AppState(Arc<Inner>);
+pub struct AppState(pub(crate) Arc<Inner>);
 
 pub struct Inner {
     pub config: Config,
@@ -32,6 +33,8 @@ pub struct Inner {
     pub notifier: alerts::Notifier,
     /// Who has which choreography open, for live co-editing.
     pub hub: live::Hub,
+    /// Who did what, by day (for the admin's statistics).
+    pub activity: activity::Tracker,
     db: Mutex<Connection>,
     /// Live changes not written to the database yet (locked under `db`).
     docs: Mutex<docs::Docs>,
@@ -61,6 +64,7 @@ impl AppState {
             music_dir,
             notifier,
             hub: live::Hub::default(),
+            activity: activity::Tracker::default(),
             db: Mutex::new(conn),
             docs: Mutex::default(),
         }));
@@ -70,6 +74,7 @@ impl AppState {
             storage::after_change(&state, &conn)?;
         }
         docs::spawn_flusher(&state);
+        activity::spawn_flusher(&state);
         Ok(state)
     }
 
@@ -124,7 +129,7 @@ pub fn app(state: AppState) -> Router {
 
 /// Write live changes still held in memory (on shutdown).
 pub async fn flush(state: &AppState) {
-    let _ = state.db(|_, _| Ok(())).await;
+    let _ = state.db(|s, conn| Ok(s.activity.flush(conn)?)).await;
 }
 
 /// Build the router from a config (opens the data dir).

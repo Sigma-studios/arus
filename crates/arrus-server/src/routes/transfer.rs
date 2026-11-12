@@ -14,6 +14,7 @@ use rusqlite::OptionalExtension;
 
 use super::choreographies::{Stored, insert, readable, summary};
 use super::{check_content_length, read_limited, upload_filename};
+use crate::activity::Kind;
 use crate::auth::Auth;
 use crate::error::{Error, Result};
 use crate::{AppState, db, storage};
@@ -44,6 +45,7 @@ pub async fn import(
         .await
         .map_err(Error::internal)??;
     let by = auth.user.username();
+    let account = auth.user.account_id();
     let created = state
         .db(move |s, conn| {
             if !db::team_exists(conn, team_id)? {
@@ -58,6 +60,9 @@ pub async fn import(
             let ids = stored.iter().map(|st| insert(&tx, team_id, st, &by, now)).collect::<rusqlite::Result<Vec<_>>>()?;
             tx.commit()?;
             storage::after_change(s, conn)?;
+            if let Some(a) = account {
+                s.activity.add(a, Kind::Created, ids.len() as i64);
+            }
             ids.into_iter().map(|id| summary(conn, id)).collect::<Result<Vec<_>>>()
         })
         .await?;
@@ -100,8 +105,11 @@ fn parse(key: &FormatKey, bytes: &[u8], filename: Option<&str>) -> Result<(Vec<C
 pub async fn export(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<Response> {
     let key = key(&state)?;
     let json = state
-        .db(move |_, conn| {
+        .db(move |s, conn| {
             readable(conn, &auth.user, id)?;
+            if let Some(a) = auth.user.account_id() {
+                s.activity.add(a, Kind::Exports, 1);
+            }
             let json: Option<String> =
                 conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0)).optional()?;
             json.ok_or_else(Error::not_found)
@@ -129,8 +137,11 @@ pub async fn export(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
 /// The choreography as a PDF, one page per formation (no format key needed).
 pub async fn pdf(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<Response> {
     let json = state
-        .db(move |_, conn| {
+        .db(move |s, conn| {
             readable(conn, &auth.user, id)?;
+            if let Some(a) = auth.user.account_id() {
+                s.activity.add(a, Kind::Exports, 1);
+            }
             let json: Option<String> =
                 conn.query_row("SELECT data FROM choreographies WHERE id = ?1", [id], |r| r.get(0)).optional()?;
             json.ok_or_else(Error::not_found)

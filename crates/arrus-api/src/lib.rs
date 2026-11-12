@@ -54,6 +54,8 @@
 //! | GET  | `/api/choreographies/{id}/music` | | audio bytes with its content type, HTTP Range supported | team readers |
 //! | PUT  | `/api/choreographies/{id}/music` | raw audio bytes, `Content-Type` audio/*, header `X-Filename` | [`ChoreographySummary`] | writers |
 //! | DELETE | `/api/choreographies/{id}/music` | | [`ChoreographySummary`] | writers |
+//! | GET  | `/api/stats?days={n}` | | [`SiteStats`] (the last `n` days, 1–730, default 30) | admin |
+//! | GET  | `/api/stats/accounts/{id}?days={n}` | | [`AccountDetailStats`] | admin |
 //! | GET  | `/api/settings/alerts` | | [`AlertSettings`] | admin |
 //! | PUT  | `/api/settings/alerts` | [`UpdateAlertSettings`] | [`AlertSettings`]; 400 with code `invalid_webhook` / `invalid_mention` | admin |
 //! | POST | `/api/settings/alerts/test` | | 204 once Discord accepted it; 400 `no_webhook`; 502 with Discord's answer | admin |
@@ -593,4 +595,135 @@ pub struct UpdateAlertSettings {
     /// `@here`, `@everyone`, `user:<id>`, `role:<id>`, `<@id>`, `<@&id>`, or `""` for nobody.
     #[serde(default)]
     pub mention: Option<String>,
+}
+
+// ---- statistics (admin) ------------------------------------------------------
+
+/// Days the statistics can look back (activity older than that is deleted).
+pub const STATS_MAX_DAYS: u32 = 730;
+
+/// The whole site over the last `days` days. Days are UTC day numbers
+/// (Unix seconds / 86 400).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SiteStats {
+    pub today: i64,
+    pub days: u32,
+    pub totals: StatTotals,
+    /// One entry per day, oldest first, ending today.
+    pub daily: Vec<DayStats>,
+    pub accounts: Vec<AccountStats>,
+    /// Every team, largest first.
+    pub teams: Vec<TeamStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct StatTotals {
+    pub accounts: u32,
+    pub premium: u32,
+    pub admins: u32,
+    pub teams: u32,
+    pub choreographies: u32,
+    pub music_tracks: u32,
+    /// Choreographies + music.
+    pub bytes_used: u64,
+    /// Accounts active today, in the last 7 and the last 30 days.
+    pub active_1: u32,
+    pub active_7: u32,
+    pub active_30: u32,
+    /// Accounts created in the last 7 and 30 days.
+    pub new_7: u32,
+    pub new_30: u32,
+    /// The first day with recorded activity (`None`: nothing recorded yet).
+    pub tracking_since: Option<i64>,
+}
+
+/// What happened on one day (on the whole site, or for one account).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DayStats {
+    pub day: i64,
+    /// Accounts created.
+    pub signups: u32,
+    /// Accounts that used Eightcount (one account: 0 or 1).
+    pub active: u32,
+    /// Minutes in Eightcount (counted in 5-minute steps).
+    pub minutes: u64,
+    pub logins: u64,
+    /// Saved changes to choreographies.
+    pub edits: u64,
+    /// Choreographies created or imported.
+    pub created: u64,
+    /// `.arrus` and PDF downloads.
+    pub exports: u64,
+    /// Music uploads.
+    pub uploads: u64,
+}
+
+/// One account's figures; "window" ones cover the `days` asked for.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AccountStats {
+    pub id: AccountId,
+    pub nickname: String,
+    pub email: Option<String>,
+    pub is_admin: bool,
+    pub is_premium: bool,
+    pub created_at: i64,
+    pub last_active_day: Option<i64>,
+    pub active_days: u32,
+    pub minutes: u64,
+    pub minutes_total: u64,
+    pub edits: u64,
+    pub edits_total: u64,
+    pub logins_total: u64,
+    pub exports_total: u64,
+    /// Teams it is in, and owns.
+    pub teams: u32,
+    pub owned_teams: u32,
+    /// Choreographies and bytes (choreographies + music) of the teams it owns.
+    pub choreographies: u32,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TeamStats {
+    pub id: TeamId,
+    pub name: String,
+    pub owner: Option<String>,
+    pub members: u32,
+    pub choreographies: u32,
+    pub bytes: u64,
+}
+
+/// One account in detail.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AccountDetailStats {
+    pub today: i64,
+    pub days: u32,
+    pub account: AccountStats,
+    /// One entry per day, oldest first, ending today.
+    pub daily: Vec<DayStats>,
+    /// Its teams, with its role in each.
+    pub teams: Vec<AccountTeamStats>,
+    /// The choreographies of its teams, last changed first.
+    pub choreographies: Vec<StatChoreography>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountTeamStats {
+    pub team: TeamStats,
+    pub role: TeamRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct StatChoreography {
+    pub id: ChoreographyId,
+    pub team: String,
+    pub name: String,
+    pub formation_count: u32,
+    pub dancer_count: u32,
+    /// Choreography + music.
+    pub bytes: u64,
+    pub has_music: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub updated_by: String,
 }

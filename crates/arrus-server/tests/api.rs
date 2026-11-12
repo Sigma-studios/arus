@@ -1405,3 +1405,67 @@ async fn prefs_are_saved_per_person() {
     assert_eq!(t.call(Method::PUT, "/api/me/prefs", Some(&admin), Some(prefs.clone())).await.status, StatusCode::OK);
     assert_eq!(t.me(&admin).await.prefs, prefs);
 }
+
+#[tokio::test]
+async fn admin_statistics() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "A").await;
+    let w = t.member(&admin, team.id, "w", true).await;
+    let w_id = w.id;
+    let w = t.login("w", &w.password).await;
+    let g = t.signup("guest1", "g@example.com", "long enough pw").await;
+
+    let s: ChoreographySummary = t.create(&w, None, sample()).await.json();
+    let doc: ChoreographyDoc = t.get(&format!("/api/choreographies/{}", s.id), &w).await.json();
+    let r = t
+        .call(Method::PUT, &format!("/api/choreographies/{}", s.id), Some(&w), Some(SaveChoreography { base_revision: 1, data: doc.data }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(t.get(&format!("/api/choreographies/{}/pdf", s.id), &w).await.status, StatusCode::OK);
+
+    // admins only
+    assert_eq!(t.get("/api/stats", &w).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.get(&format!("/api/stats/accounts/{w_id}"), &g).await.status, StatusCode::FORBIDDEN);
+
+    let st: SiteStats = t.get("/api/stats?days=7", &admin).await.json();
+    assert_eq!(st.days, 7);
+    assert_eq!(st.daily.len(), 7);
+    assert_eq!(st.daily.last().unwrap().day, st.today);
+    let today = st.daily.last().unwrap();
+    assert_eq!(today.signups, 2);
+    assert_eq!(today.active, 2);
+    assert_eq!(today.logins, 2, "w's login and guest1's signup");
+    assert_eq!(today.edits, 1);
+    assert_eq!(today.created, 1);
+    assert_eq!(today.exports, 1);
+    assert_eq!(today.minutes, 10);
+    assert_eq!(st.totals.accounts, 2);
+    assert_eq!(st.totals.active_1, 2);
+    assert_eq!(st.totals.new_7, 2);
+    assert_eq!(st.totals.choreographies, 1);
+    assert_eq!(st.totals.tracking_since, Some(st.today));
+    assert_eq!(st.teams.len(), 1);
+    assert_eq!(st.teams[0].choreographies, 1);
+    let ws = st.accounts.iter().find(|a| a.nickname == "w").unwrap();
+    assert_eq!((ws.edits, ws.edits_total, ws.logins_total, ws.exports_total), (1, 1, 1, 1));
+    assert_eq!((ws.teams, ws.owned_teams, ws.minutes, ws.active_days), (1, 0, 5, 1));
+    assert_eq!(ws.last_active_day, Some(st.today));
+
+    let d: AccountDetailStats = t.get(&format!("/api/stats/accounts/{w_id}?days=3"), &admin).await.json();
+    assert_eq!(d.daily.len(), 3);
+    assert_eq!(d.account.nickname, "w");
+    let last = d.daily.last().unwrap();
+    assert_eq!((last.signups, last.active, last.edits, last.created), (1, 1, 1, 1));
+    assert_eq!(d.teams.len(), 1);
+    assert_eq!(d.teams[0].role, TeamRole::CoOwner);
+    assert_eq!(d.choreographies.len(), 1);
+    assert_eq!(d.choreographies[0].team, "A");
+    assert_eq!(t.get("/api/stats/accounts/999", &admin).await.status, StatusCode::NOT_FOUND);
+
+    // the activity goes with the account
+    assert_eq!(t.call(Method::DELETE, &format!("/api/accounts/{w_id}"), Some(&admin), None::<()>).await.status, StatusCode::NO_CONTENT);
+    let st: SiteStats = t.get("/api/stats?days=1", &admin).await.json();
+    assert_eq!(st.daily[0].active, 1);
+    assert_eq!(st.daily[0].edits, 0);
+}
