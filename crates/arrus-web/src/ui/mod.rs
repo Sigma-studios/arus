@@ -648,8 +648,10 @@ impl App {
                 ui.close();
             }
             ui.separator();
-            if ui.add(egui::Button::new(RichText::new("Impressum / Legal notice").small().color(theme::TEXT_WEAK)).frame(false)).clicked() {
-                web::navigate("/impressum");
+            for (label, url) in [("Impressum", "/impressum"), ("Privacy policy", "/datenschutz"), ("Terms of use", "/nutzungsbedingungen")] {
+                if ui.add(egui::Button::new(RichText::new(label).small().color(theme::TEXT_WEAK)).frame(false)).clicked() {
+                    web::navigate(url);
+                }
             }
         });
         if let Some(to) = goto {

@@ -164,7 +164,7 @@ impl T {
     async fn signup_resp(&self, nickname: &str, email: &str, pw: &str, pw2: &str, next: &str) -> Resp {
         let enc = |v: &str| percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC).to_string();
         let body = format!(
-            "nickname={}&email={}&password={}&password2={}&next={}",
+            "nickname={}&email={}&password={}&password2={}&terms=on&next={}",
             enc(nickname),
             enc(email),
             enc(pw),
@@ -1758,7 +1758,20 @@ async fn legal_pages() {
     assert_eq!(t.page("/imprint").await.location(), "/impressum");
     assert!(t.page("/delete-account").await.text().contains("Delete my account"));
     assert!(t.page("/account-deleted").await.text().contains("deleted"));
-    for p in ["/login", "/signup", "/forgot", "/delete-account"] {
-        assert!(t.page(p).await.text().contains(r#"href="/impressum""#), "{p}");
+    let privacy = t.page("/datenschutz").await.text();
+    assert!(privacy.contains("OVH SAS") && privacy.contains("Brevo") && privacy.contains("Privacy policy (English)"));
+    assert!(t.page("/nutzungsbedingungen").await.text().contains("Rechtswidrige Inhalte melden"));
+    assert!(t.page("/impressum").await.text().contains("Digital Services Act"));
+    assert_eq!(t.page("/privacy").await.location(), "/datenschutz");
+    assert_eq!(t.page("/terms").await.location(), "/nutzungsbedingungen");
+    // signing up needs the terms
+    let r = t
+        .form("/signup", "nickname=carl&email=carl%40example.com&password=long+enough+pw&password2=long+enough+pw")
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(r.text().contains("accept the terms"));
+    for p in ["/login", "/signup", "/forgot", "/delete-account", "/datenschutz"] {
+        let text = t.page(p).await.text();
+        assert!(text.contains(r#"href="/impressum""#) && text.contains(r#"href="/datenschutz""#), "{p}");
     }
 }

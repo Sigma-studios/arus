@@ -140,6 +140,9 @@ pub struct SignupForm {
     password: String,
     #[serde(default)]
     password2: String,
+    /// The terms-of-use checkbox ("on").
+    #[serde(default)]
+    terms: Option<String>,
     #[serde(default)]
     next: Option<String>,
 }
@@ -153,6 +156,7 @@ fn signup_html(form: &SignupForm, next: Option<&str>, error: Option<&str>) -> St
         .replace("{{next}}", &esc(next.unwrap_or("")))
         .replace("{{login}}", &esc(&with_next("/login", next)))
         .replace("{{min}}", &arrus_api::MIN_PASSWORD_LEN.to_string())
+        .replace("{{terms}}", if form.terms.as_deref() == Some("on") { "checked" } else { "" })
         .replace("{{legal}}", crate::legal::FOOTER)
 }
 
@@ -188,10 +192,14 @@ pub async fn signup_submit(State(state): State<AppState>, Form(form): Form<Signu
     if form.password != form.password2 {
         return Ok(fail(&form, "The two passwords are different."));
     }
+    if form.terms.as_deref() != Some("on") {
+        return Ok(fail(&form, "Please accept the terms of use."));
+    }
     let password = form.password.clone();
     let created = state
         .db(move |s, conn| {
             let id = accounts::insert_account(conn, &nickname, Some(&email), &password, false)?;
+            conn.execute("UPDATE accounts SET terms_accepted_at = ?1 WHERE id = ?2", rusqlite::params![crate::db::now(), id])?;
             s.activity.add(id, Kind::Logins, 1);
             let token = auth::create_session(conn, Some(id))?;
             email::send(s, conn, id, email::Kind::Confirm)?;
@@ -256,11 +264,21 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result
 // ---- links sent by email ---------------------------------------------------
 
 /// A small page in the login style.
+/// A long text (legal pages): the small-page look, wider.
+pub(crate) fn doc_page(title: &str, inner: &str) -> Response {
+    let html = PAGE_HTML
+        .replace("main{width:min(380px,92vw);", "main{width:min(760px,94vw);margin:24px 0;")
+        .replace("{{title}}", &esc(title))
+        .replace("{{inner}}", inner)
+        .replace("{{legal}}", crate::legal::FOOTER);
+    no_store(Html(html).into_response())
+}
+
 pub(crate) fn page(title: &str, inner: &str) -> Response {
     let html = PAGE_HTML
         .replace("{{title}}", &esc(title))
         .replace("{{inner}}", inner)
-        .replace("{{legal}}", if title == "Impressum" { "" } else { crate::legal::FOOTER });
+        .replace("{{legal}}", crate::legal::FOOTER);
     no_store(Html(html).into_response())
 }
 
@@ -538,6 +556,8 @@ const LOGIN_HTML: &str = r#"<!doctype html>
   ol{margin:0 0 8px;padding-left:20px}
   p.legal{margin:22px 0 0;text-align:center;font-size:12px}
   p.legal a{color:#707078}
+  label.check{display:flex;gap:10px;align-items:flex-start;margin:18px 0 0;font-size:13px;color:#a0a0a8}
+  label.check input{width:auto;margin:2px 0 0;flex:none}
 </style>
 </head>
 <body>
@@ -597,6 +617,8 @@ const PAGE_HTML: &str = r#"<!doctype html>
   ol{margin:0 0 8px;padding-left:20px}
   p.legal{margin:22px 0 0;text-align:center;font-size:12px}
   p.legal a{color:#707078}
+  label.check{display:flex;gap:10px;align-items:flex-start;margin:18px 0 0;font-size:13px;color:#a0a0a8}
+  label.check input{width:auto;margin:2px 0 0;flex:none}
 </style>
 </head>
 <body>
@@ -642,6 +664,8 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
   ol{margin:0 0 8px;padding-left:20px}
   p.legal{margin:22px 0 0;text-align:center;font-size:12px}
   p.legal a{color:#707078}
+  label.check{display:flex;gap:10px;align-items:flex-start;margin:18px 0 0;font-size:13px;color:#a0a0a8}
+  label.check input{width:auto;margin:2px 0 0;flex:none}
 </style>
 </head>
 <body>
@@ -661,6 +685,10 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
     <input id="password" name="password" type="password" autocomplete="new-password" minlength="{{min}}" required>
     <label for="password2">Password again</label>
     <input id="password2" name="password2" type="password" autocomplete="new-password" minlength="{{min}}" required>
+    <label class="check"><input type="checkbox" name="terms" value="on" required {{terms}}>
+      <span>I'm at least 16 (or have a parent's consent) and accept the
+      <a href="/nutzungsbedingungen" target="_blank">terms of use</a>. How we handle your data:
+      <a href="/datenschutz" target="_blank">privacy policy</a>.</span></label>
     <button type="submit">Create account</button>
   </form>
   <p class="alt">Already have an account? <a href="{{login}}">Log in</a></p>
@@ -702,6 +730,8 @@ const INVALID_INVITE_HTML: &str = r#"<!doctype html>
   ol{margin:0 0 8px;padding-left:20px}
   p.legal{margin:22px 0 0;text-align:center;font-size:12px}
   p.legal a{color:#707078}
+  label.check{display:flex;gap:10px;align-items:flex-start;margin:18px 0 0;font-size:13px;color:#a0a0a8}
+  label.check input{width:auto;margin:2px 0 0;flex:none}
 </style>
 </head>
 <body>

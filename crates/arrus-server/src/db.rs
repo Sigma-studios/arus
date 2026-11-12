@@ -125,6 +125,8 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     add_column(conn, "accounts", "prefs", "TEXT")?;
     // unix seconds when the current email was confirmed (NULL: not yet)
     add_column(conn, "accounts", "email_verified_at", "INTEGER")?;
+    // unix seconds when the person accepted the terms of use at sign-up
+    add_column(conn, "accounts", "terms_accepted_at", "INTEGER")?;
     conn.pragma_update(None, "foreign_keys", "ON")
 }
 

@@ -143,12 +143,16 @@ fn plan_card(ui: &mut Ui, premium: bool, current: bool) {
                     .fill(fill)
                     .min_size(egui::vec2(ui.available_width(), 36.0)),
             );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!("Want premium already? Write to {CONTACT}."))
-                    .small()
-                    .color(theme::TEXT_WEAK),
-            );
+            // Not inside the store apps: Apple and Google only allow buying
+            // digital extras through their own payment, so no pointer elsewhere.
+            if !crate::web::in_app() {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!("Want premium already? Write to {CONTACT}."))
+                        .small()
+                        .color(theme::TEXT_WEAK),
+                );
+            }
         } else {
             ui.add_enabled(
                 false,

@@ -69,14 +69,16 @@ impl Mailer {
                 tokio::spawn(async move {
                     match req.send().await {
                         Ok(r) if r.status().is_success() => {
-                            tracing::info!(to = %mail.to, subject = %mail.subject, "mail sent");
+                            // No addresses in the logs (see the privacy policy).
+                            tracing::info!(subject = %mail.subject, "mail sent");
                         }
                         Ok(r) => {
                             let status = r.status();
                             let text = r.text().await.unwrap_or_default();
-                            tracing::error!(to = %mail.to, %status, "Brevo refused the mail: {text}");
+                            let text = text.replace(&mail.to, "<recipient>");
+                            tracing::error!(subject = %mail.subject, %status, "Brevo refused the mail: {text}");
                         }
-                        Err(e) => tracing::error!(to = %mail.to, "mail not sent: {e}"),
+                        Err(e) => tracing::error!(subject = %mail.subject, "mail not sent: {e}"),
                     }
                 });
             }
