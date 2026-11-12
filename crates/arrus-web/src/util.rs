@@ -75,11 +75,11 @@ pub fn weekday(day: i64) -> usize {
     (day + 3).rem_euclid(7) as usize
 }
 
-/// `45 min`, `3 h 05`, `120 h`.
+/// `45 min`, `3 h 05`, `2 h`, `120 h`.
 pub fn fmt_minutes(m: u64) -> String {
     match m {
         0..60 => format!("{m} min"),
-        60..6000 => format!("{} h {:02}", m / 60, m % 60),
+        60..6000 if m % 60 != 0 => format!("{} h {:02}", m / 60, m % 60),
         _ => format!("{} h", m / 60),
     }
 }
@@ -227,6 +227,7 @@ mod tests {
         assert_eq!(weekday(20_769), 3, "12 Nov 2026 is a Thursday");
         assert_eq!(fmt_minutes(45), "45 min");
         assert_eq!(fmt_minutes(185), "3 h 05");
+        assert_eq!(fmt_minutes(120), "2 h");
         assert_eq!(fmt_minutes(7200), "120 h");
         assert_eq!(fmt_count(12_345.0), "12k");
         assert_eq!(fmt_count(1_234.0), "1.2k");

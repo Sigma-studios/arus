@@ -228,12 +228,7 @@ fn tiles(ui: &mut Ui, s: &SiteStats) {
         ("Choreographies", t.choreographies.to_string(), format!("{} with music", t.music_tracks)),
         ("Storage used", util::fmt_bytes(t.bytes_used), String::new()),
     ];
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        for (label, value, sub) in items {
-            tile(ui, label, &value, &sub);
-        }
-    });
+    tile_grid(ui, &items);
     let since = match t.tracking_since {
         Some(d) => format!("Activity (time, logins, edits, exports) is recorded since {}.", util::fmt_date(d)),
         None => "No activity recorded yet: time, logins and edits are counted from now on.".to_owned(),
@@ -242,12 +237,40 @@ fn tiles(ui: &mut Ui, s: &SiteStats) {
     ui.label(RichText::new(since).small().color(theme::TEXT_FAINT));
 }
 
-fn tile(ui: &mut Ui, label: &str, value: &str, sub: &str) {
-    widgets::card().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
-        ui.set_width(150.0);
-        ui.label(RichText::new(label.to_uppercase()).small().strong().color(theme::TEXT_FAINT));
-        ui.label(RichText::new(value).size(24.0).strong().color(theme::TEXT));
-        ui.label(RichText::new(if sub.is_empty() { " " } else { sub }).small().color(theme::TEXT_WEAK));
+/// Figure tiles in rows of equal width: label, big value, small note.
+fn tile_grid(ui: &mut Ui, items: &[(&str, String, String)]) {
+    const GAP: f32 = 10.0;
+    const MIN_W: f32 = 165.0;
+    let avail = ui.available_width();
+    let cols = (((avail + GAP) / (MIN_W + GAP)).floor() as usize).clamp(1, items.len().max(1));
+    let w = (avail - GAP * (cols as f32 - 1.0)) / cols as f32;
+    for row in items.chunks(cols) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            for (label, value, sub) in row {
+                tile(ui, w, label, value, sub);
+            }
+        });
+        ui.add_space(GAP);
+    }
+}
+
+fn tile(ui: &mut Ui, width: f32, label: &str, value: &str, sub: &str) {
+    let margin = 14.0;
+    widgets::card().inner_margin(Margin::symmetric(margin as i8, 10)).show(ui, |ui| {
+        let inner = width - 2.0 * margin - 2.0;
+        ui.set_width(inner);
+        ui.vertical(|ui| {
+            ui.set_width(inner);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.add(egui::Label::new(RichText::new(label.to_uppercase()).small().strong().color(theme::TEXT_FAINT)).truncate());
+            ui.add(egui::Label::new(RichText::new(value).size(24.0).strong().color(theme::TEXT)).truncate());
+            ui.add(
+                egui::Label::new(RichText::new(if sub.is_empty() { " " } else { sub }).small().color(theme::TEXT_WEAK))
+                    .truncate(),
+            )
+            .on_hover_text(sub);
+        });
     });
 }
 
@@ -271,6 +294,8 @@ struct Series<'a> {
     mark: Mark,
     color: Color32,
     fmt: fn(f64) -> String,
+    /// Axis step unit: 60 for minutes (round hours), 1 otherwise.
+    unit: f64,
 }
 
 fn charts(ui: &mut Ui, s: &SiteStats, compact: bool) {
@@ -290,14 +315,14 @@ fn charts(ui: &mut Ui, s: &SiteStats, compact: bool) {
     let int = |v: f64| util::fmt_count(v);
     let hours = |v: f64| util::fmt_minutes(v.round() as u64);
     let series = [
-        Series { title: "Active accounts per day", values: col(|d| d.active as u64), agg: Agg::Mean, mark: Mark::Bars, color: theme::accent(), fmt: int },
-        Series { title: "Accounts in total", values: cumulative, agg: Agg::Last, mark: Mark::Line, color: theme::SELECT, fmt: int },
-        Series { title: "New accounts", values: col(|d| d.signups as u64), agg: Agg::Sum, mark: Mark::Bars, color: theme::OK, fmt: int },
-        Series { title: "Time used", values: col(|d| d.minutes), agg: Agg::Sum, mark: Mark::Bars, color: theme::accent(), fmt: hours },
-        Series { title: "Edits", values: col(|d| d.edits), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int },
-        Series { title: "Logins", values: col(|d| d.logins), agg: Agg::Sum, mark: Mark::Bars, color: theme::SELECT, fmt: int },
-        Series { title: "Choreographies created", values: col(|d| d.created), agg: Agg::Sum, mark: Mark::Bars, color: theme::OK, fmt: int },
-        Series { title: "Downloads (.arrus + PDF)", values: col(|d| d.exports), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int },
+        Series { title: "Active accounts per day", values: col(|d| d.active as u64), agg: Agg::Mean, mark: Mark::Bars, color: theme::accent(), fmt: int, unit: 1.0 },
+        Series { title: "Accounts in total", values: cumulative, agg: Agg::Last, mark: Mark::Line, color: theme::SELECT, fmt: int, unit: 1.0 },
+        Series { title: "New accounts", values: col(|d| d.signups as u64), agg: Agg::Sum, mark: Mark::Bars, color: theme::OK, fmt: int, unit: 1.0 },
+        Series { title: "Time used", values: col(|d| d.minutes), agg: Agg::Sum, mark: Mark::Bars, color: theme::accent(), fmt: hours, unit: 60.0 },
+        Series { title: "Edits", values: col(|d| d.edits), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int, unit: 1.0 },
+        Series { title: "Logins", values: col(|d| d.logins), agg: Agg::Sum, mark: Mark::Bars, color: theme::SELECT, fmt: int, unit: 1.0 },
+        Series { title: "Choreographies created", values: col(|d| d.created), agg: Agg::Sum, mark: Mark::Bars, color: theme::OK, fmt: int, unit: 1.0 },
+        Series { title: "Downloads (.arrus + PDF)", values: col(|d| d.exports), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int, unit: 1.0 },
     ];
     grid(ui, compact, series.len() + 2, |ui, i| {
         if let Some(sr) = series.get(i) {
@@ -363,7 +388,7 @@ fn chart(ui: &mut Ui, s: &Series<'_>, days: &[i64], height: f32) {
     let label_w = 34.0;
     let plot = egui::Rect::from_min_max(pos2(rect.left() + label_w, rect.top() + 4.0), pos2(rect.right(), rect.bottom() - 16.0));
     let max = values.iter().cloned().fold(0.0_f64, f64::max);
-    let top = nice_max(max);
+    let top = nice_max(max / s.unit) * s.unit;
     // Grid lines at 0, ½ and the top.
     for f in [0.0, 0.5, 1.0] {
         let y = plot.bottom() - plot.height() * f;
@@ -734,17 +759,17 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
     );
     ui.add_space(8.0);
     let period = window_label(d.days);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        tile(ui, "Time used", &util::fmt_minutes(a.minutes), &format!("{period} · {} all time", util::fmt_minutes(a.minutes_total)));
-        tile(ui, "Active days", &a.active_days.to_string(), &format!("of the last {}", d.days));
-        tile(ui, "Edits", &a.edits.to_string(), &format!("{period} · {} all time", a.edits_total));
-        tile(ui, "Logins", &a.logins_total.to_string(), "all time");
-        tile(ui, "Downloads", &a.exports_total.to_string(), ".arrus + PDF, all time");
-        tile(ui, "Teams", &a.teams.to_string(), &format!("owns {}", a.owned_teams));
-        tile(ui, "Choreographies", &a.choreographies.to_string(), "in teams it owns");
-        tile(ui, "Storage", &util::fmt_bytes(a.bytes), "of teams it owns");
-    });
+    let items = [
+        ("Time used", util::fmt_minutes(a.minutes), format!("{period} · {} all time", util::fmt_minutes(a.minutes_total))),
+        ("Active days", a.active_days.to_string(), format!("of the last {}", d.days)),
+        ("Edits", a.edits.to_string(), format!("{period} · {} all time", a.edits_total)),
+        ("Logins", a.logins_total.to_string(), "all time".to_owned()),
+        ("Downloads", a.exports_total.to_string(), ".arrus + PDF, all time".to_owned()),
+        ("Teams", a.teams.to_string(), format!("owns {}", a.owned_teams)),
+        ("Choreographies", a.choreographies.to_string(), "in teams it owns".to_owned()),
+        ("Storage", util::fmt_bytes(a.bytes), "of teams it owns".to_owned()),
+    ];
+    tile_grid(ui, &items);
     ui.add_space(10.0);
 
     let days: Vec<i64> = d.daily.iter().map(|x| x.day).collect();
@@ -752,8 +777,8 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
     let int = |v: f64| util::fmt_count(v);
     let hours = |v: f64| util::fmt_minutes(v.round() as u64);
     let series = [
-        Series { title: "Time used", values: col(|x| x.minutes), agg: Agg::Sum, mark: Mark::Bars, color: theme::accent(), fmt: hours },
-        Series { title: "Edits", values: col(|x| x.edits), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int },
+        Series { title: "Time used", values: col(|x| x.minutes), agg: Agg::Sum, mark: Mark::Bars, color: theme::accent(), fmt: hours, unit: 60.0 },
+        Series { title: "Edits", values: col(|x| x.edits), agg: Agg::Sum, mark: Mark::Bars, color: theme::WARN, fmt: int, unit: 1.0 },
     ];
     grid(ui, compact, series.len(), |ui, i| chart_card(ui, &series[i], &days));
 
