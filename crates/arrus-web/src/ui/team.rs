@@ -54,10 +54,15 @@ pub fn load(app: &mut App) {
                     app.team_ui.members = m;
                     app.team_ui.loaded_for = Some(team);
                 }
+                Err(e) if e.is_not_found() => {
+                    app.lost_team();
+                    return;
+                }
                 Err(e) => app.fail(e),
             }
             match invites {
                 Some(Ok(i)) => app.team_ui.invites = i,
+                Some(Err(e)) if e.is_not_found() => app.team_ui.invites.clear(),
                 Some(Err(e)) => app.fail(e),
                 None => app.team_ui.invites.clear(),
             }

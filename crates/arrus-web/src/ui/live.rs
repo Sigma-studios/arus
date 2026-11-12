@@ -437,7 +437,11 @@ fn on_sent(app: &mut App, id: ChoreographyId, batch: u64, r: net::ApiResult<Save
             // Refused (no permission, storage full, broken change): drop it and
             // go back to what the server has.
             live.unacked.retain(|b| b.id != batch);
-            app.fail(e);
+            if e.is_not_found() {
+                app.toast_error("This choreography was deleted, or you were removed from its team.");
+            } else {
+                app.fail(e);
+            }
             resync(app, id);
         }
     }

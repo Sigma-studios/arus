@@ -59,6 +59,8 @@ pub fn reload(app: &mut App) {
                     app.library.items = items;
                     app.library.loaded_for = team;
                 }
+                // The team was deleted or this account left it: pick another quietly.
+                Err(e) if e.is_not_found() => app.lost_team(),
                 Err(e) => app.fail(e),
             }
         }

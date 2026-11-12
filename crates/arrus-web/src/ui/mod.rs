@@ -187,6 +187,16 @@ impl App {
         }
     }
 
+    /// The current team is gone (deleted, or this account was removed from
+    /// it): fetch the teams again, which switches to another one.
+    pub fn lost_team(&mut self) {
+        self.library.loading = false;
+        self.reload_me();
+        if self.is_admin() {
+            self.load_teams();
+        }
+    }
+
     /// Fetch who is logged in again (teams, roles, limits changed).
     pub fn reload_me(&mut self) {
         self.net.spawn(async {

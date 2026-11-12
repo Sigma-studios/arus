@@ -130,7 +130,13 @@ pub fn open(app: &mut App, id: ChoreographyId) {
                 }
                 Err(e) => {
                     app.screen = Screen::Library;
-                    app.fail(e);
+                    // Don't open the same dead link again on the next reload.
+                    web::set_hash_choreography(None);
+                    if e.is_not_found() {
+                        app.toast_error("That choreography doesn't exist anymore, or you're not in its team.");
+                    } else {
+                        app.fail(e);
+                    }
                 }
             }
         }

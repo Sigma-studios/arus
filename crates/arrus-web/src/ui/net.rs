@@ -86,6 +86,13 @@ impl fmt::Display for ApiError {
     }
 }
 
+impl ApiError {
+    /// 404: what was asked for is gone, or not visible to this account.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ApiError::Http { status: 404, .. })
+    }
+}
+
 pub type ApiResult<T> = Result<T, ApiError>;
 
 async fn call(method: &str, url: &str, body: Body, headers: &[(&str, String)]) -> ApiResult<String> {
