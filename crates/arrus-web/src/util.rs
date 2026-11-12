@@ -79,7 +79,7 @@ pub fn weekday(day: i64) -> usize {
 pub fn fmt_minutes(m: u64) -> String {
     match m {
         0..60 => format!("{m} min"),
-        60..6000 if m % 60 != 0 => format!("{} h {:02}", m / 60, m % 60),
+        60..6000 if !m.is_multiple_of(60) => format!("{} h {:02}", m / 60, m % 60),
         _ => format!("{} h", m / 60),
     }
 }
