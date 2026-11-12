@@ -232,6 +232,25 @@ impl Notifier {
         });
     }
 
+    /// Any other message for the admin (tagging the configured mention).
+    pub fn notice(&self, text: &str) {
+        let d = self.discord();
+        let msg = match d.mention.as_deref().filter(|m| !m.is_empty()) {
+            Some(m) => format!("{m} {text}"),
+            None => text.to_owned(),
+        };
+        let Some(url) = d.webhook else {
+            tracing::warn!("admin notice (no Discord webhook set): {msg}");
+            return;
+        };
+        let me = self.clone();
+        self.runtime.spawn(async move {
+            if let Err(e) = me.post(&url, &msg).await {
+                tracing::error!("{e}");
+            }
+        });
+    }
+
     /// A test message (tagging nobody), awaited so the admin sees the outcome.
     pub async fn test(&self, used: u64, limit: u64) -> Result<(), String> {
         let url = self.discord().webhook.ok_or_else(|| "no Discord webhook is set".to_owned())?;

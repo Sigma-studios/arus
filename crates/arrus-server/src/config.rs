@@ -24,8 +24,68 @@ pub struct Config {
     pub insecure_cookies: bool,
     /// `ARUS_DEV_AUTOLOGIN=1` (only honoured with insecure cookies).
     pub dev_autologin: bool,
-    /// `ARUS_PUBLIC_URL`, included in alerts.
+    /// `ARUS_PUBLIC_URL`, included in alerts and the links in emails.
     pub public_url: Option<String>,
+    /// Sending emails (confirm the address, reset a password); `None`: off.
+    pub mail: Option<Mail>,
+}
+
+/// Where emails come from and how they are sent.
+#[derive(Debug, Clone)]
+pub struct Mail {
+    pub transport: MailTransport,
+    /// `ARUS_MAIL_FROM`: the sender address, e.g. `no-reply@example.com`.
+    pub from: String,
+    /// `ARUS_MAIL_FROM_NAME`, default `Eightcount`.
+    pub from_name: String,
+    /// `ARUS_MAIL_REPLY_TO`: where answers go (the sender is not read).
+    pub reply_to: Option<String>,
+}
+
+#[derive(Clone)]
+pub enum MailTransport {
+    /// Brevo's transactional email API (`ARUS_BREVO_API_KEY`).
+    Brevo { api_key: String },
+    /// Kept in memory and logged, not sent (tests, local development).
+    Memory,
+}
+
+impl std::fmt::Debug for MailTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MailTransport::Brevo { .. } => f.write_str("Brevo { api_key: <hidden> }"),
+            MailTransport::Memory => f.write_str("Memory"),
+        }
+    }
+}
+
+impl Mail {
+    /// In memory, for tests.
+    pub fn memory() -> Self {
+        Self { transport: MailTransport::Memory, from: "no-reply@example.com".into(), from_name: "Eightcount".into(), reply_to: None }
+    }
+
+    /// `ARUS_BREVO_API_KEY` + `ARUS_MAIL_FROM` (+ `ARUS_PUBLIC_URL` for the links).
+    fn from_env(public_url: Option<&str>) -> Option<Self> {
+        let key = env_opt("ARUS_BREVO_API_KEY");
+        let from = env_opt("ARUS_MAIL_FROM");
+        let (Some(api_key), Some(from)) = (key.clone(), from.clone()) else {
+            if key.is_some() || from.is_some() {
+                tracing::warn!("emails are off: set both ARUS_BREVO_API_KEY and ARUS_MAIL_FROM");
+            }
+            return None;
+        };
+        if public_url.is_none() {
+            tracing::warn!("emails are off: ARUS_PUBLIC_URL is needed for the links in them");
+            return None;
+        }
+        Some(Self {
+            transport: MailTransport::Brevo { api_key },
+            from,
+            from_name: env_opt("ARUS_MAIL_FROM_NAME").unwrap_or_else(|| "Eightcount".into()),
+            reply_to: env_opt("ARUS_MAIL_REPLY_TO"),
+        })
+    }
 }
 
 fn env_opt(name: &str) -> Option<String> {
@@ -72,6 +132,7 @@ impl Config {
         if dev_autologin {
             tracing::warn!("ARUS_DEV_AUTOLOGIN is on: anyone opening / is logged in as admin");
         }
+        let public_url = env_opt("ARUS_PUBLIC_URL").map(|u| u.trim_end_matches('/').to_string());
         Ok(Self {
             admin_password,
             port: port_from_env()?,
@@ -80,7 +141,8 @@ impl Config {
             format_key,
             insecure_cookies,
             dev_autologin,
-            public_url: env_opt("ARUS_PUBLIC_URL"),
+            mail: Mail::from_env(public_url.as_deref()),
+            public_url,
         })
     }
 }

@@ -14,7 +14,7 @@ use super::ApiJson;
 use super::teams::delete_teams;
 use crate::auth::{self, Auth, User};
 use crate::error::{Error, Result};
-use crate::{AppState, db, words};
+use crate::{AppState, db, email, words};
 
 // ---- validation -------------------------------------------------------------
 
@@ -117,6 +117,42 @@ pub fn insert_account(
     Ok(conn.last_insert_rowid())
 }
 
+/// Set an account's email; a different address is no longer confirmed.
+/// Returns whether it changed.
+fn set_email(conn: &Connection, id: i64, email: Option<&str>) -> Result<bool> {
+    let lower = email.map(str::to_lowercase);
+    let current: Option<String> = conn.query_row("SELECT email_lower FROM accounts WHERE id = ?1", [id], |r| r.get(0))?;
+    let changed = current != lower;
+    conn.execute("UPDATE accounts SET email = ?1, email_lower = ?2 WHERE id = ?3", params![email, lower, id])?;
+    if changed {
+        conn.execute("UPDATE accounts SET email_verified_at = NULL WHERE id = ?1", [id])?;
+    }
+    Ok(changed && email.is_some())
+}
+
+/// After an account changed: tell its old address that the email changed,
+/// and (`password`) that the password changed.
+fn notify_changes(
+    state: &AppState,
+    conn: &Connection,
+    id: i64,
+    before: Option<(String, Option<String>)>,
+    password: bool,
+) -> Result<()> {
+    let Some((_, old)) = before else { return Ok(()) };
+    let Some((nickname, now)) = email::contact_of(conn, id)? else { return Ok(()) };
+    if let Some(old) = &old
+        && Some(old.to_lowercase()) != now.as_deref().map(str::to_lowercase)
+    {
+        email::notify(state, old, &nickname, email::Notice::EmailChanged { new_email: now.clone() });
+    }
+    // To the address it had before: a thief changing both is still reported.
+    if password && let Some(to) = old.or(now) {
+        email::notify(state, &to, &nickname, email::Notice::PasswordChanged);
+    }
+    Ok(())
+}
+
 // ---- me ---------------------------------------------------------------------
 
 fn my_teams(conn: &Connection, account_id: i64) -> Result<Vec<MyTeam>> {
@@ -144,13 +180,17 @@ fn my_teams(conn: &Connection, account_id: i64) -> Result<Vec<MyTeam>> {
     Ok(teams)
 }
 
-fn load_me(conn: &Connection, user: &User) -> Result<Me> {
+fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
+    let mail = state.mailer.is_some();
     let User::Account(a) = user else {
         return Ok(Me {
             username: ADMIN_USERNAME.into(),
             role: Role::Admin,
             account_id: None,
             email: None,
+            email_verified: false,
+            mail,
+            confirm_sent: false,
             premium: true,
             teams: Vec::new(),
             can_create_team: true,
@@ -158,17 +198,21 @@ fn load_me(conn: &Connection, user: &User) -> Result<Me> {
             prefs: admin_prefs(conn)?,
         });
     };
-    let (email, changed_at, prefs): (Option<String>, Option<i64>, Option<String>) = conn.query_row(
-        "SELECT email, nickname_changed_at, prefs FROM accounts WHERE id = ?1",
-        [a.id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )?;
+    let (email, changed_at, prefs, verified_at): (Option<String>, Option<i64>, Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT email, nickname_changed_at, prefs, email_verified_at FROM accounts WHERE id = ?1",
+            [a.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
     let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
     Ok(Me {
         username: a.nickname.clone(),
         role: if a.is_admin { Role::Admin } else { Role::Member },
         account_id: Some(a.id),
+        email_verified: email.is_some() && verified_at.is_some(),
+        confirm_sent: email::pending(conn, a.id, email::Kind::Confirm)?,
         email,
+        mail,
         premium: a.is_premium,
         teams: my_teams(conn, a.id)?,
         can_create_team: a.is_admin || a.is_premium || (owned as u32) < FREE_TEAMS,
@@ -219,7 +263,27 @@ pub async fn update_prefs(
 }
 
 pub async fn me(State(state): State<AppState>, auth: Auth) -> Result<Json<Me>> {
-    state.db(move |_, conn| Ok(Json(load_me(conn, &auth.user)?))).await
+    state.db(move |s, conn| Ok(Json(load_me(s, conn, &auth.user)?))).await
+}
+
+/// Send the confirm link (again) to the logged-in account's email.
+pub async fn confirm_email(State(state): State<AppState>, auth: Auth) -> Result<StatusCode> {
+    let Some(id) = auth.user.account_id() else {
+        return Err(Error::with_code(StatusCode::BAD_REQUEST, "no_email", "the admin has no email"));
+    };
+    let sent = state.db(move |s, conn| email::send(s, conn, id, email::Kind::Confirm)).await?;
+    match sent {
+        email::Sent::Sent => Ok(StatusCode::NO_CONTENT),
+        email::Sent::TooSoon => Err(Error::with_code(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_soon",
+            "an email was just sent: wait a minute before asking again",
+        )),
+        email::Sent::NoEmail => Err(Error::with_code(StatusCode::BAD_REQUEST, "no_email", "your account has no email")),
+        email::Sent::Off => {
+            Err(Error::with_code(StatusCode::SERVICE_UNAVAILABLE, "mail_off", "this server does not send emails"))
+        }
+    }
 }
 
 pub async fn update_me(State(state): State<AppState>, auth: Auth, ApiJson(body): ApiJson<UpdateMe>) -> Result<Json<Me>> {
@@ -233,7 +297,7 @@ pub async fn update_me(State(state): State<AppState>, auth: Auth, ApiJson(body):
     }
     let token_hash = auth.token_hash.clone();
     state
-        .db(move |_, conn| {
+        .db(move |s, conn| {
             let (hash, visible): (String, Option<String>) = conn.query_row(
                 "SELECT password_hash, password_visible FROM accounts WHERE id = ?1",
                 [id],
@@ -269,14 +333,13 @@ pub async fn update_me(State(state): State<AppState>, auth: Auth, ApiJson(body):
                     )?;
                 }
             }
+            let before = email::contact_of(&tx, id)?;
+            let mut email_changed = false;
             if let Some(e) = &email {
                 if let Some(e) = e {
                     email_free(&tx, e, Some(id))?;
                 }
-                tx.execute(
-                    "UPDATE accounts SET email = ?1, email_lower = ?2 WHERE id = ?3",
-                    params![e, e.as_deref().map(str::to_lowercase), id],
-                )?;
+                email_changed = set_email(&tx, id, e.as_deref())?;
             }
             if let Some(p) = &body.new_password {
                 // Their own password: hashed only, the admin no longer sees it.
@@ -287,8 +350,12 @@ pub async fn update_me(State(state): State<AppState>, auth: Auth, ApiJson(body):
                 tx.execute("DELETE FROM sessions WHERE account_id = ?1 AND token_hash != ?2", params![id, token_hash])?;
             }
             tx.commit()?;
+            if email_changed {
+                email::send(s, conn, id, email::Kind::Confirm)?;
+            }
+            notify_changes(s, conn, id, before, body.new_password.is_some())?;
             let user = User::Account(auth::load_account(conn, id)?.ok_or_else(Error::not_found)?);
-            Ok(Json(load_me(conn, &user)?))
+            Ok(Json(load_me(s, conn, &user)?))
         })
         .await
 }
@@ -392,7 +459,7 @@ pub async fn update(
         return Err(Error::bad_request("you cannot take away your own admin rights"));
     }
     state
-        .db(move |_, conn| {
+        .db(move |s, conn| {
             let tx = conn.transaction()?;
             let exists: Option<i64> = tx.query_row("SELECT id FROM accounts WHERE id = ?1", [id], |r| r.get(0)).optional()?;
             if exists.is_none() {
@@ -402,14 +469,13 @@ pub async fn update(
                 nickname_free(&tx, n, Some(id))?;
                 tx.execute("UPDATE accounts SET nickname = ?1, nickname_lower = ?2 WHERE id = ?3", params![n, n.to_lowercase(), id])?;
             }
+            let before = email::contact_of(&tx, id)?;
+            let mut email_changed = false;
             if let Some(e) = &email {
                 if let Some(e) = e {
                     email_free(&tx, e, Some(id))?;
                 }
-                tx.execute(
-                    "UPDATE accounts SET email = ?1, email_lower = ?2 WHERE id = ?3",
-                    params![e, e.as_deref().map(str::to_lowercase), id],
-                )?;
+                email_changed = set_email(&tx, id, e.as_deref())?;
             }
             if let Some(v) = body.is_admin {
                 tx.execute("UPDATE accounts SET is_admin = ?1 WHERE id = ?2", params![v, id])?;
@@ -425,6 +491,11 @@ pub async fn update(
                 tx.execute("DELETE FROM sessions WHERE account_id = ?1", [id])?;
             }
             tx.commit()?;
+            if email_changed {
+                email::send(s, conn, id, email::Kind::Confirm)?;
+            }
+            // A password the admin sets is handed over by the admin: no email.
+            notify_changes(s, conn, id, before, false)?;
             Ok(Json(load_account_info(conn, id)?))
         })
         .await
@@ -442,11 +513,15 @@ pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
                 let mut stmt = conn.prepare("SELECT id FROM teams WHERE owner_id = ?1")?;
                 stmt.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
             };
+            let Some((nickname, address)) = email::contact_of(conn, id)? else { return Err(Error::not_found()) };
             delete_teams(s, conn, &owned)?;
-            // Sessions and memberships cascade.
+            // Sessions, memberships, email links and activity cascade.
             let n = conn.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
             if n == 0 {
                 return Err(Error::not_found());
+            }
+            if let Some(to) = address {
+                email::notify(s, &to, &nickname, email::Notice::AccountDeleted);
             }
             Ok(StatusCode::NO_CONTENT)
         })
