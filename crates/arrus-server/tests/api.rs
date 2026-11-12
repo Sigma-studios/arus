@@ -1716,3 +1716,49 @@ async fn plan_limits_teams_choreographies_music() {
     let r = t.call(Method::POST, "/api/teams", Some(&free), Some(CreateTeam { name: "One too many".into() })).await;
     assert_eq!(r.error().code.as_deref(), Some("limit_teams"));
 }
+
+#[tokio::test]
+async fn people_delete_their_own_account() {
+    let t = T::with_mail();
+    let admin = t.admin().await;
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let team: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "Bobs".into() })).await.json();
+    t.create(&bob, Some(team.id), sample()).await;
+    // also in a team someone else owns, which stays
+    let other = t.team(&admin, "Other").await;
+    let body = AddTeamMember { nickname: "bob".into(), role: TeamRole::CoOwner };
+    assert_eq!(t.call(Method::POST, &format!("/api/teams/{}/members", other.id), Some(&admin), Some(body)).await.status, StatusCode::OK);
+
+    let r = t.call(Method::DELETE, "/api/me", Some(&bob), Some(DeleteMe { password: "wrong".into() })).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.error().code.as_deref(), Some("wrong_password"));
+    // the master admin has nothing to delete
+    let r = t.call(Method::DELETE, "/api/me", Some(&admin), Some(DeleteMe { password: ADMIN_PW.into() })).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    let r = t.call(Method::DELETE, "/api/me", Some(&bob), Some(DeleteMe { password: "correct horse".into() })).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert!(r.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("Max-Age=0"));
+    assert_eq!(t.get("/api/me", &bob).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(t.login_resp("bob", "correct horse").await.location(), "/login?error=1");
+    let teams: Vec<Team> = t.get("/api/teams", &admin).await.json();
+    assert_eq!(teams.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["Other"]);
+    assert!(t.outbox().last().unwrap().subject.contains("deleted"));
+    // the nickname and email are free again
+    t.signup("bob", "bob@example.com", "another pw!").await;
+}
+
+#[tokio::test]
+async fn legal_pages() {
+    let t = T::new();
+    let r = t.page("/impressum").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let text = r.text();
+    assert!(text.contains("Mathis Aibache") && text.contains("52064 Aachen") && text.contains("contact@eightcount.de"));
+    assert_eq!(t.page("/imprint").await.location(), "/impressum");
+    assert!(t.page("/delete-account").await.text().contains("Delete my account"));
+    assert!(t.page("/account-deleted").await.text().contains("deleted"));
+    for p in ["/login", "/signup", "/forgot", "/delete-account"] {
+        assert!(t.page(p).await.text().contains(r#"href="/impressum""#), "{p}");
+    }
+}

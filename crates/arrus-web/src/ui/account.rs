@@ -1,7 +1,7 @@
 //! Account settings: the logged-in account changes its email or password
-//! (the nickname is in [`super::settings`]: once a month).
+//! (the nickname is in [`super::settings`]: once a month), or deletes itself.
 
-use arrus_api::{MIN_PASSWORD_LEN, Me, UpdateMe};
+use arrus_api::{DeleteMe, MIN_PASSWORD_LEN, Me, TeamRole, UpdateMe};
 use egui::RichText;
 
 use super::widgets::{self, Choice};
@@ -16,6 +16,16 @@ pub struct AccountUi {
     new_password: String,
     new_password2: String,
     current: String,
+    error: Option<String>,
+    /// "Delete my account": the password typed, and whether it is being deleted.
+    delete: Option<DeleteForm>,
+}
+
+#[derive(Default)]
+struct DeleteForm {
+    password: String,
+    confirm: bool,
+    busy: bool,
     error: Option<String>,
 }
 
@@ -56,6 +66,7 @@ fn save(app: &mut App, body: UpdateMe) {
 }
 
 pub fn dialog(app: &mut App, ctx: &egui::Context) {
+    delete_dialog(app, ctx);
     if !app.account.open {
         return;
     }
@@ -67,6 +78,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         || !a.new_password.is_empty();
     let valid = changed && !a.current.is_empty() && !pw_mismatch && !pw_short && !a.busy;
     let mut send_link = false;
+    let mut open_delete = false;
     let c = widgets::dialog(ctx, "account_settings", "Account settings", "Save", false, valid, |ui| {
         egui::Grid::new("account_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
             ui.label("Email");
@@ -116,9 +128,19 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                 .small()
                 .color(theme::TEXT_FAINT),
         );
+        ui.add_space(10.0);
+        ui.separator();
+        if ui.add(egui::Button::new(RichText::new("Delete my account…").color(theme::ERROR)).frame(false)).clicked() {
+            open_delete = true;
+        }
     });
     if send_link {
         super::confirm::send(app);
+    }
+    if open_delete {
+        app.account.open = false;
+        app.account.delete = Some(DeleteForm::default());
+        return;
     }
     match c {
         Some(Choice::Confirm) => {
@@ -134,4 +156,67 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         Some(Choice::Cancel) => app.account.open = false,
         None => {}
     }
+}
+
+fn delete_dialog(app: &mut App, ctx: &egui::Context) {
+    let Some(me) = app.me.clone() else { return };
+    let Some(f) = &mut app.account.delete else { return };
+    let owned: Vec<&str> = me.teams.iter().filter(|t| t.role == TeamRole::Owner).map(|t| t.name.as_str()).collect();
+    let valid = f.confirm && !f.password.is_empty() && !f.busy;
+    let mut enter = false;
+    let c = widgets::dialog(ctx, "delete_account", "Delete your account?", "Delete my account", true, valid, |ui| {
+        ui.label(format!("This deletes the account {} for good. It can't be undone.", me.username));
+        ui.add_space(6.0);
+        if owned.is_empty() {
+            ui.label(RichText::new("You own no teams. Teams others own stay as they are.").small().color(theme::TEXT_WEAK));
+        } else {
+            ui.label(RichText::new("These teams you own are deleted too, with all their choreographies and music, for everyone in them:").small());
+            for t in &owned {
+                ui.label(RichText::new(format!("• {t}")).strong());
+            }
+            ui.label(
+                RichText::new("To keep choreographies, export them first (.arrus or PDF, in the library).")
+                    .small()
+                    .color(theme::TEXT_WEAK),
+            );
+        }
+        ui.add_space(8.0);
+        ui.label("Your password");
+        let r = ui.add(egui::TextEdit::singleline(&mut f.password).password(true).desired_width(f32::INFINITY));
+        enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        ui.checkbox(&mut f.confirm, "I understand that everything listed is deleted for good");
+        if let Some(e) = &f.error {
+            ui.label(RichText::new(e).color(theme::ERROR));
+        }
+        if f.busy {
+            ui.spinner();
+        }
+    });
+    let go = matches!(c, Some(Choice::Confirm)) || (enter && valid);
+    if matches!(c, Some(Choice::Cancel)) {
+        app.account.delete = None;
+        return;
+    }
+    if !go {
+        return;
+    }
+    f.busy = true;
+    f.error = None;
+    let body = DeleteMe { password: f.password.clone() };
+    app.net.spawn(async move {
+        let r = net::send_empty_json("DELETE", "/api/me", &body).await;
+        move |app: &mut App| match r {
+            Ok(()) => crate::web::navigate("/account-deleted"),
+            Err(net::ApiError::Unauthorized) => crate::web::navigate("/login"),
+            Err(e) => {
+                if let Some(f) = &mut app.account.delete {
+                    f.busy = false;
+                    f.error = Some(match &e {
+                        net::ApiError::Http { code: Some(c), .. } if c == "wrong_password" => "That password is wrong.".into(),
+                        e => e.to_string(),
+                    });
+                }
+            }
+        }
+    });
 }

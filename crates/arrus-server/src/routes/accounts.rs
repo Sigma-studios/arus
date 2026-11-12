@@ -2,7 +2,7 @@
 //! admin's list of every account.
 
 use arrus_api::{
-    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, MIN_PASSWORD_LEN, Me, MyTeam, PlanLimits,
+    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, DeleteMe, MIN_PASSWORD_LEN, Me, MyTeam, PlanLimits,
     NICKNAME_CHANGE_INTERVAL, Role, TeamRole, UpdateAccount, UpdateMe, UserPrefs,
 };
 use axum::Json;
@@ -516,6 +516,52 @@ pub async fn update(
         .await
 }
 
+/// Delete an account: the teams it owns (with their choreographies and
+/// music), then the account (sessions, memberships, email links and activity
+/// cascade); a last email confirms it.
+pub fn delete_account(s: &AppState, conn: &mut Connection, id: i64) -> Result<()> {
+    let Some((nickname, address)) = email::contact_of(conn, id)? else { return Err(Error::not_found()) };
+    let owned: Vec<i64> = {
+        let mut stmt = conn.prepare("SELECT id FROM teams WHERE owner_id = ?1")?;
+        stmt.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    delete_teams(s, conn, &owned)?;
+    if conn.execute("DELETE FROM accounts WHERE id = ?1", [id])? == 0 {
+        return Err(Error::not_found());
+    }
+    if let Some(to) = address {
+        email::notify(s, &to, &nickname, email::Notice::AccountDeleted);
+    }
+    Ok(())
+}
+
+/// The logged-in account deletes itself (password needed).
+pub async fn delete_me(
+    State(state): State<AppState>,
+    auth: Auth,
+    ApiJson(body): ApiJson<DeleteMe>,
+) -> Result<axum::response::Response> {
+    let Some(id) = auth.user.account_id() else {
+        return Err(Error::bad_request("the master admin has no account to delete"));
+    };
+    state
+        .db(move |s, conn| {
+            let (hash, visible): (String, Option<String>) = conn.query_row(
+                "SELECT password_hash, password_visible FROM accounts WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if !auth::password_matches(&body.password, &hash, visible.as_deref()) {
+                return Err(Error::with_code(StatusCode::FORBIDDEN, "wrong_password", "the password is wrong"));
+            }
+            delete_account(s, conn, id)
+        })
+        .await?;
+    let mut r = axum::response::IntoResponse::into_response(StatusCode::NO_CONTENT);
+    auth::set_cookie(r.headers_mut(), auth::clear_cookie(&state));
+    Ok(r)
+}
+
 /// Deletes the account, its sessions and the teams it owns.
 pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<StatusCode> {
     auth.user.require_admin()?;
@@ -524,20 +570,7 @@ pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i6
     }
     state
         .db(move |s, conn| {
-            let owned: Vec<i64> = {
-                let mut stmt = conn.prepare("SELECT id FROM teams WHERE owner_id = ?1")?;
-                stmt.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
-            };
-            let Some((nickname, address)) = email::contact_of(conn, id)? else { return Err(Error::not_found()) };
-            delete_teams(s, conn, &owned)?;
-            // Sessions, memberships, email links and activity cascade.
-            let n = conn.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
-            if n == 0 {
-                return Err(Error::not_found());
-            }
-            if let Some(to) = address {
-                email::notify(s, &to, &nickname, email::Notice::AccountDeleted);
-            }
+            delete_account(s, conn, id)?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await

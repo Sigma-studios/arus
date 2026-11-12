@@ -9,6 +9,7 @@ pub mod docs;
 pub mod email;
 pub mod error;
 pub mod healthcheck;
+pub mod legal;
 pub mod live;
 pub mod mail;
 pub mod routes;

@@ -647,6 +647,10 @@ impl App {
                 logout = true;
                 ui.close();
             }
+            ui.separator();
+            if ui.add(egui::Button::new(RichText::new("Impressum / Legal notice").small().color(theme::TEXT_WEAK)).frame(false)).clicked() {
+                web::navigate("/impressum");
+            }
         });
         if let Some(to) = goto {
             self.go(to);

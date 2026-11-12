@@ -82,7 +82,8 @@ pub async fn login_page(
         .replace("{{forgot}}", forgot)
         .replace("{{error}}", error)
         .replace("{{next}}", &esc(next.as_deref().unwrap_or("")))
-        .replace("{{signup}}", &esc(&with_next("/signup", next.as_deref())));
+        .replace("{{signup}}", &esc(&with_next("/signup", next.as_deref())))
+        .replace("{{legal}}", crate::legal::FOOTER);
     Ok(no_store(Html(page).into_response()))
 }
 
@@ -152,6 +153,7 @@ fn signup_html(form: &SignupForm, next: Option<&str>, error: Option<&str>) -> St
         .replace("{{next}}", &esc(next.unwrap_or("")))
         .replace("{{login}}", &esc(&with_next("/login", next)))
         .replace("{{min}}", &arrus_api::MIN_PASSWORD_LEN.to_string())
+        .replace("{{legal}}", crate::legal::FOOTER)
 }
 
 pub async fn signup_page(
@@ -254,8 +256,11 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result
 // ---- links sent by email ---------------------------------------------------
 
 /// A small page in the login style.
-fn page(title: &str, inner: &str) -> Response {
-    let html = PAGE_HTML.replace("{{title}}", &esc(title)).replace("{{inner}}", inner);
+pub(crate) fn page(title: &str, inner: &str) -> Response {
+    let html = PAGE_HTML
+        .replace("{{title}}", &esc(title))
+        .replace("{{inner}}", inner)
+        .replace("{{legal}}", if title == "Impressum" { "" } else { crate::legal::FOOTER });
     no_store(Html(html).into_response())
 }
 
@@ -527,6 +532,12 @@ const LOGIN_HTML: &str = r#"<!doctype html>
   p.alt{margin:18px 0 0;text-align:center;color:#a0a0a8;font-size:14px}
   p.hint{margin:6px 0 0;color:#707078;font-size:12px}
   a{color:#b394ff}
+  h3{margin:18px 0 6px;font-size:14px;color:#e8e8eb}
+  p{margin:0 0 8px}
+  p.small,ol{font-size:14px;color:#c4c4cc}
+  ol{margin:0 0 8px;padding-left:20px}
+  p.legal{margin:22px 0 0;text-align:center;font-size:12px}
+  p.legal a{color:#707078}
 </style>
 </head>
 <body>
@@ -545,6 +556,7 @@ const LOGIN_HTML: &str = r#"<!doctype html>
     <button type="submit">Log in</button>
   </form>
   <p class="alt">No account yet? <a href="{{signup}}">Sign up</a></p>
+  {{legal}}
 </main>
 </body>
 </html>
@@ -579,6 +591,12 @@ const PAGE_HTML: &str = r#"<!doctype html>
   p.alt{margin:18px 0 0;text-align:center;color:#a0a0a8;font-size:14px}
   p.hint{margin:8px 0 0;color:#707078;font-size:12px}
   a{color:#b394ff}
+  h3{margin:18px 0 6px;font-size:14px;color:#e8e8eb}
+  p{margin:0 0 8px}
+  p.small,ol{font-size:14px;color:#c4c4cc}
+  ol{margin:0 0 8px;padding-left:20px}
+  p.legal{margin:22px 0 0;text-align:center;font-size:12px}
+  p.legal a{color:#707078}
 </style>
 </head>
 <body>
@@ -586,6 +604,7 @@ const PAGE_HTML: &str = r#"<!doctype html>
   <h1>Eightcount</h1>
   <h2>{{title}}</h2>
   {{inner}}
+  {{legal}}
 </main>
 </body>
 </html>
@@ -617,6 +636,12 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
   p.alt{margin:18px 0 0;text-align:center;color:#a0a0a8;font-size:14px}
   p.hint{margin:6px 0 0;color:#707078;font-size:12px}
   a{color:#b394ff}
+  h3{margin:18px 0 6px;font-size:14px;color:#e8e8eb}
+  p{margin:0 0 8px}
+  p.small,ol{font-size:14px;color:#c4c4cc}
+  ol{margin:0 0 8px;padding-left:20px}
+  p.legal{margin:22px 0 0;text-align:center;font-size:12px}
+  p.legal a{color:#707078}
 </style>
 </head>
 <body>
@@ -639,6 +664,7 @@ const SIGNUP_HTML: &str = r#"<!doctype html>
     <button type="submit">Create account</button>
   </form>
   <p class="alt">Already have an account? <a href="{{login}}">Log in</a></p>
+  {{legal}}
 </main>
 </body>
 </html>
@@ -670,6 +696,12 @@ const INVALID_INVITE_HTML: &str = r#"<!doctype html>
   p.alt{margin:18px 0 0;text-align:center;color:#a0a0a8;font-size:14px}
   p.hint{margin:6px 0 0;color:#707078;font-size:12px}
   a{color:#b394ff}
+  h3{margin:18px 0 6px;font-size:14px;color:#e8e8eb}
+  p{margin:0 0 8px}
+  p.small,ol{font-size:14px;color:#c4c4cc}
+  ol{margin:0 0 8px;padding-left:20px}
+  p.legal{margin:22px 0 0;text-align:center;font-size:12px}
+  p.legal a{color:#707078}
 </style>
 </head>
 <body>

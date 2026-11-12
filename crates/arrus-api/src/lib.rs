@@ -41,6 +41,7 @@
 //! | GET  | `/api/teams/{id}/invites` | | `Vec<Invite>` | owner, admin |
 //! | POST | `/api/teams/{id}/invites` | [`CreateInvite`] | [`Invite`] | owner, admin |
 //! | DELETE | `/api/invites/{token}` | | 204 | owner, admin |
+//! | DELETE | `/api/me` | [`DeleteMe`] | 204 (logged out); deletes the account and the teams it owns; 403 `wrong_password` | accounts |
 //! | GET  | `/api/accounts` | | `Vec<AccountInfo>` | admin |
 //! | POST | `/api/accounts` | [`CreateAccount`] | [`AccountInfo`] | admin |
 //! | PATCH | `/api/accounts/{id}` | [`UpdateAccount`] | [`AccountInfo`] | admin |
@@ -421,6 +422,12 @@ pub struct UpdateAccount {
 }
 
 /// An account changes its own details. Needs the current password.
+/// Delete one's own account (and the teams it owns), for good.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DeleteMe {
+    pub password: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct UpdateMe {
     pub current_password: String,

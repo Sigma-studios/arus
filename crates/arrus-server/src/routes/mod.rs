@@ -33,7 +33,7 @@ pub const JSON_LIMIT: usize = 64 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/version", get(web::version))
-        .route("/me", get(accounts::me).patch(accounts::update_me))
+        .route("/me", get(accounts::me).patch(accounts::update_me).delete(accounts::delete_me))
         .route("/me/prefs", put(accounts::update_prefs))
         .route("/me/confirm-email", post(accounts::confirm_email))
         .route("/accounts", get(accounts::list).post(accounts::create))
@@ -75,6 +75,11 @@ pub fn router(state: AppState) -> Router {
         .route("/reset-password/{token}", get(web::reset_page).post(web::reset_submit))
         .route("/confirm-email/{token}", get(web::confirm_email_page))
         .route("/logout", post(web::logout))
+        .route("/impressum", get(crate::legal::impressum))
+        .route("/imprint", get(crate::legal::to_impressum))
+        .route("/legal", get(crate::legal::to_impressum))
+        .route("/delete-account", get(crate::legal::delete_account))
+        .route("/account-deleted", get(crate::legal::account_deleted))
         .route("/healthz", get(web::healthz))
         .fallback(web::fallback)
         // The wasm client shrinks from ~4.7 MB to ~1.7 MB; audio is left alone (already
