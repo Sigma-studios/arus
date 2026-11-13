@@ -718,9 +718,9 @@ fn detail_window(app: &mut App, ctx: &egui::Context) {
     }
     let compact = app.compact;
     let r = egui::Modal::new(egui::Id::unique("stats_detail")).show(ctx, |ui| {
-        widgets::fit_modal(ui, 820.0);
+        let width = widgets::modal_width(ui.ctx(), 1000.0);
+        ui.set_width(width);
         let Some(d) = app.stats.detail.clone() else {
-            ui.set_min_width(widgets::modal_width(ui.ctx(), 820.0));
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label("Loading…");
@@ -729,12 +729,15 @@ fn detail_window(app: &mut App, ctx: &egui::Context) {
         };
         let mut close = false;
         ui.horizontal(|ui| {
-            ui.heading(&d.account.nickname);
+            ui.label(RichText::new(&d.account.nickname).size(24.0).strong());
             plan_badge(ui, &d.account);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| close = ui.button("Close").clicked());
         });
-        let max_h = ui.ctx().content_rect().height() * 0.75;
-        ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+        ui.add_space(4.0);
+        // A fixed height: sized to its content, the area kept the one-line
+        // height of "Loading…" and cut the figures off.
+        let h = (ui.ctx().content_rect().height() * 0.8 - 80.0).max(200.0);
+        ScrollArea::vertical().min_scrolled_height(h).max_height(h).auto_shrink(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
             detail_body(ui, &d, compact);
         });
@@ -746,6 +749,13 @@ fn detail_window(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// A section title in the account popup (larger than the screens' small caps).
+fn detail_heading(ui: &mut Ui, title: &str) {
+    ui.add_space(10.0);
+    ui.label(RichText::new(title).size(17.0).strong().color(theme::TEXT));
+    ui.add_space(4.0);
+}
+
 fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
     let a = &d.account;
     let email = a.email.as_deref().unwrap_or("no email");
@@ -755,9 +765,10 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
             util::fmt_date(util_day(a.created_at)),
             last_active(a, d.today)
         ))
-        .color(theme::TEXT_WEAK),
+        .size(15.0)
+        .color(theme::TEXT),
     );
-    ui.add_space(8.0);
+    ui.add_space(10.0);
     let period = window_label(d.days);
     let items = [
         ("Time used", util::fmt_minutes(a.minutes), format!("{period} · {} all time", util::fmt_minutes(a.minutes_total))),
@@ -782,7 +793,7 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
     ];
     grid(ui, compact, series.len(), |ui, i| chart_card(ui, &series[i], &days));
 
-    widgets::section(ui, "Teams");
+    detail_heading(ui, "Teams");
     if d.teams.is_empty() {
         ui.label(RichText::new("In no team.").color(theme::TEXT_WEAK));
     }
@@ -801,35 +812,34 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
                     t.team.choreographies,
                     util::fmt_bytes(t.team.bytes)
                 ))
-                .small()
                 .color(theme::TEXT_WEAK),
             );
         });
     }
     ui.add_space(8.0);
-    widgets::section(ui, "Choreographies in its teams");
+    detail_heading(ui, "Choreographies in its teams");
     if d.choreographies.is_empty() {
         ui.label(RichText::new("None.").color(theme::TEXT_WEAK));
         return;
     }
-    egui::Grid::new("stats_detail_choreos").num_columns(if compact { 2 } else { 5 }).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
+    egui::Grid::new("stats_detail_choreos").num_columns(if compact { 2 } else { 5 }).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
         for c in &d.choreographies {
             ui.vertical(|ui| {
                 ui.label(RichText::new(&c.name).strong());
-                ui.label(RichText::new(&c.team).small().color(theme::TEXT_FAINT));
+                ui.label(RichText::new(&c.team).color(theme::TEXT_WEAK));
             });
             let shape = format!("{} formations · {} dancers{}", c.formation_count, c.dancer_count, if c.has_music { " · ♪" } else { "" });
             let changed = format!("changed {} by {}", util::fmt_date(util_day(c.updated_at)), c.updated_by);
             if compact {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(format!("{shape} · {}", util::fmt_bytes(c.bytes))).small());
-                    ui.label(RichText::new(changed).small().color(theme::TEXT_WEAK));
+                    ui.label(format!("{shape} · {}", util::fmt_bytes(c.bytes)));
+                    ui.label(RichText::new(changed).color(theme::TEXT_WEAK));
                 });
             } else {
-                ui.label(RichText::new(shape).small());
-                ui.label(RichText::new(util::fmt_bytes(c.bytes)).small());
-                ui.label(RichText::new(format!("created {}", util::fmt_date(util_day(c.created_at)))).small().color(theme::TEXT_WEAK));
-                ui.label(RichText::new(changed).small().color(theme::TEXT_WEAK));
+                ui.label(shape);
+                ui.label(util::fmt_bytes(c.bytes));
+                ui.label(RichText::new(format!("created {}", util::fmt_date(util_day(c.created_at)))).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(changed).color(theme::TEXT_WEAK));
             }
             ui.end_row();
         }
