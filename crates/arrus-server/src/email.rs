@@ -1,5 +1,5 @@
 //! Links sent by email (confirming an address, resetting a password) and
-//! notices (email or password changed, account deleted).
+//! notices (email or password changed, account deleted, Premium ended).
 //!
 //! Each link carries a random token; only its hash is stored (like sessions).
 //! A token works once, until it expires, and only for the address it was
@@ -145,6 +145,8 @@ pub enum Notice {
     EmailChanged { new_email: Option<String> },
     PasswordChanged,
     AccountDeleted,
+    /// Premium ended; `must_choose`: its teams are read-only until it picks what to keep.
+    PremiumEnded { must_choose: bool },
 }
 
 /// Send a notice to `to` (when emails are on).
@@ -155,7 +157,25 @@ pub fn notify(state: &AppState, to: &str, nickname: &str, notice: Notice) {
         Notice::EmailChanged { new_email } => mail::email_changed(to, nickname, new_email.as_deref(), contact),
         Notice::PasswordChanged => mail::password_changed(to, nickname, contact),
         Notice::AccountDeleted => mail::account_deleted(to, nickname, contact),
+        Notice::PremiumEnded { must_choose } => {
+            let link = format!("{}/", state.config.public_url.as_deref().unwrap_or("").trim_end_matches('/'));
+            mail::premium_ended(to, nickname, must_choose, &link, contact)
+        }
     });
+}
+
+/// Tell the account its Premium ended (call once the change is stored and
+/// [`db::sync_plan`] ran): whether it must choose what to keep.
+pub fn premium_ended(state: &AppState, conn: &Connection, account_id: i64) -> Result<()> {
+    let row: Option<(String, Option<String>, bool, bool)> = conn
+        .query_row("SELECT nickname, email, must_choose, is_admin FROM accounts WHERE id = ?1", [account_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .optional()?;
+    if let Some((nickname, Some(to), must_choose, false)) = row {
+        notify(state, &to, &nickname, Notice::PremiumEnded { must_choose });
+    }
+    Ok(())
 }
 
 /// An account's nickname and email.

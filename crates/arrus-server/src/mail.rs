@@ -206,6 +206,41 @@ pub fn account_deleted(to: &str, nickname: &str, contact: Option<&str>) -> Mail 
     notice(to, nickname, "Your Eightcount account was deleted", "Your account was deleted", &[what, more], &after)
 }
 
+/// Premium ended. `must_choose`: the account holds more than the free plan
+/// allows, its teams are read-only until it picks what to keep (at `link`).
+pub fn premium_ended(to: &str, nickname: &str, must_choose: bool, link: &str, contact: Option<&str>) -> Mail {
+    let free = format!(
+        "your Eightcount Premium has ended, so your account is on the free plan now: 1 team with up to {} \
+         choreographies, and no new music.",
+        arrus_api::FREE_CHOREOGRAPHIES
+    );
+    let back = "With Premium again, everything becomes editable again.";
+    let after = match contact {
+        Some(c) => format!("{back} Questions? Reply to this email or write to {c}."),
+        None => back.to_owned(),
+    };
+    if !must_choose {
+        let fits = "Everything you have fits the free plan, so nothing changes: your team and its choreographies \
+                    stay editable. Music you already added keeps playing.";
+        return notice(to, nickname, "Your Eightcount Premium has ended", "Your Premium has ended", &[&free, fits], &after);
+    }
+    let hello = format!("Hi {nickname},");
+    let choose = format!(
+        "You have more than that, so your teams are read-only for now. Log in and choose the team and the {} \
+         choreographies you keep editing (you choose once).",
+        arrus_api::FREE_CHOREOGRAPHIES
+    );
+    let kept = "Nothing is deleted: everything else stays readable, and you and your team can still open, export \
+                (.arrus, PDF) and delete it. Music you already added keeps playing.";
+    Mail {
+        to: to.to_string(),
+        to_name: nickname.to_string(),
+        subject: "Your Eightcount Premium has ended: choose what you keep editing".into(),
+        text: format!("{hello}\n\n{free}\n\n{choose}\n\n{kept}\n\nChoose here:\n{link}\n\n{after}\n"),
+        html: html("Your Premium has ended", &[&hello, &free, &choose, kept], "Choose what to keep", link, &after),
+    }
+}
+
 /// "Confirm your email" (after signing up or changing the address).
 pub fn confirm_email(to: &str, nickname: &str, link: &str) -> Mail {
     let hello = format!("Hi {nickname},");

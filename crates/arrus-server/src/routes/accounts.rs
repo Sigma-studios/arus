@@ -509,6 +509,8 @@ pub async fn update(
                 tx.execute("UPDATE accounts SET nickname = ?1, nickname_lower = ?2 WHERE id = ?3", params![n, n.to_lowercase(), id])?;
             }
             let before = email::contact_of(&tx, id)?;
+            let was_premium: bool = tx.query_row("SELECT is_premium FROM accounts WHERE id = ?1", [id], |r| r.get(0))?;
+            let premium_ended = was_premium && body.is_premium == Some(false);
             let mut email_changed = false;
             if let Some(e) = &email {
                 if let Some(e) = e {
@@ -538,6 +540,9 @@ pub async fn update(
             }
             // A password the admin sets is handed over by the admin: no email.
             notify_changes(s, conn, id, before, false)?;
+            if premium_ended {
+                email::premium_ended(s, conn, id)?;
+            }
             Ok(Json(load_account_info(conn, id)?))
         })
         .await

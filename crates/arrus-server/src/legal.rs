@@ -13,8 +13,8 @@ pub const OPERATOR_CITY: &str = "52064 Aachen";
 pub const OPERATOR_COUNTRY: &str = "Deutschland / Germany";
 pub const CONTACT_EMAIL: &str = "contact@eightcount.de";
 /// When the privacy policy and the terms last changed.
-pub const LEGAL_DATE_DE: &str = "12. November 2026";
-pub const LEGAL_DATE_EN: &str = "12 November 2026";
+pub const LEGAL_DATE_DE: &str = "13. November 2026";
+pub const LEGAL_DATE_EN: &str = "13 November 2026";
 
 /// The small links under the login and sign-up forms and every small page.
 pub const FOOTER: &str = r#"<p class="legal"><a href="/impressum">Impressum</a> · <a href="/datenschutz">Datenschutz / Privacy</a> · <a href="/nutzungsbedingungen">Nutzungsbedingungen / Terms</a></p>"#;
@@ -96,8 +96,8 @@ const PRIVACY_DE: &str = r##"<p class="small">Stand: {date} · <a href="#en">Eng
 
   <h3>6. E-Mails</h3>
   <p class="small">Wir senden nur E-Mails, die zu deinem Konto gehören: Bestätigung der E-Mail-Adresse, Link zum
-  Zurücksetzen des Passworts sowie Hinweise, wenn deine E-Mail-Adresse oder dein Passwort geändert oder dein Konto
-  gelöscht wurde. Versendet werden sie über Brevo (Sendinblue SAS, 106 boulevard Haussmann, 75008 Paris, Frankreich)
+  Zurücksetzen des Passworts sowie Hinweise, wenn deine E-Mail-Adresse oder dein Passwort geändert, dein Konto
+  gelöscht wurde oder dein Premium endet. Versendet werden sie über Brevo (Sendinblue SAS, 106 boulevard Haussmann, 75008 Paris, Frankreich)
   als Auftragsverarbeiter; Brevo erhält dazu deine E-Mail-Adresse, deinen Spitznamen und den Inhalt der E-Mail und
   speichert Versandprotokolle nach eigenen Fristen. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO, für die
   Sicherheitshinweise auch lit. f. Links in E-Mails sind 24 Stunden (Bestätigung) bzw. 1 Stunde (Passwort) gültig;
@@ -161,7 +161,7 @@ const PRIVACY_DE: &str = r##"<p class="small">Stand: {date} · <a href="#en">Eng
   <p class="small"><b>Cookie and browser storage:</b> one session cookie (<code>arus_session</code>, 30 days) and a few
   device settings in local storage, both strictly necessary (§ 25(2) no. 2 TDDDG); no tracking cookies.</p>
   <p class="small"><b>Emails:</b> only account emails (confirm address, password reset, notices when your email or
-  password changed or your account was deleted), sent via Brevo (Sendinblue SAS, Paris, France) as processor, which
+  password changed, your account was deleted or your Premium ended), sent via Brevo (Sendinblue SAS, Paris, France) as processor, which
   receives your email address, nickname and the message. Art. 6(1)(b), security notices also (f). Links expire after
   24 h / 1 h and are stored only as hashes.</p>
   <p class="small"><b>Contact:</b> messages to {mail} are kept in a mailbox at Proton AG (Switzerland, adequacy
@@ -195,6 +195,12 @@ const TERMS_DE: &str = r##"<p class="small">Stand: {date} · <a href="#en">Engli
   freigeschaltet; wird Premium kostenpflichtig angeboten, gelten dafür zusätzliche Bedingungen, denen du vor dem Kauf
   zustimmst. Wir entwickeln Eightcount weiter und können Funktionen ändern. Eine bestimmte Verfügbarkeit schulden wir
   bei der kostenlosen Nutzung nicht; Wartungen und Störungen sind möglich.</p>
+  <p class="small">Endet Premium (etwa weil es gekündigt oder nicht verlängert wird), gilt für dein Konto wieder der
+  Tarif Free. Gehen deine Inhalte über dessen Umfang hinaus, werden die Teams, die dir gehören, schreibgeschützt, und
+  du wählst einmalig ein Team und bis zu zwei seiner Choreografien, die bearbeitbar bleiben; wir informieren dich
+  darüber per E-Mail. Die übrigen Inhalte löschen wir nicht: Du und die Mitglieder deiner Teams können sie weiter
+  ansehen, exportieren und löschen, aber nicht mehr ändern. Bereits hochgeladene Musik bleibt abspielbar; neue Musik
+  setzt Premium voraus. Hast du wieder Premium, sind alle deine Inhalte wieder bearbeitbar.</p>
 
   <h3>3. Konto</h3>
   <p class="small">Du musst mindestens 16 Jahre alt sein; Jüngere brauchen die Zustimmung ihrer Eltern. Gib eine
@@ -247,7 +253,12 @@ const TERMS_DE: &str = r##"<p class="small">Stand: {date} · <a href="#en">Engli
   <p class="small"><b>2. Service.</b> Plan choreographies alone or as a team. Free: one team of your own with up to two
   choreographies, no music. Premium: up to 20 teams with up to 20 choreographies each and 250 MB of music. Premium is
   not sold yet but granted by us case by case; once it is sold, additional terms apply that you accept before buying.
-  Features may change; the free service comes without a guaranteed availability.</p>
+  Features may change; the free service comes without a guaranteed availability. When Premium ends (e.g. cancelled or
+  not renewed), your account is on the Free plan again. If your content goes beyond it, the teams you own become
+  read-only and you choose, once, one team and up to two of its choreographies that stay editable; we tell you by
+  email. Nothing else is deleted: you and your teams' members can still view, export and delete it, but no longer
+  change it. Music already uploaded still plays; new music needs Premium. With Premium again, all of it is editable
+  again.</p>
   <p class="small"><b>3. Account.</b> You must be 16 or older (younger with a parent's consent), use an email address
   of your own, keep your password secret and not share your account. Delete your account at any time in the account
   settings; the teams you own are deleted with it.</p>

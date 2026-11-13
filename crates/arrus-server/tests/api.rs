@@ -1868,6 +1868,49 @@ async fn premium_ending_within_the_free_limits_changes_nothing() {
 }
 
 #[tokio::test]
+async fn premium_ending_sends_an_email() {
+    let t = T::with_mail();
+    let admin = t.admin().await;
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let id = t.me(&bob).await.account_id.unwrap();
+    let set = |upd: UpdateAccount| {
+        let (t, admin) = (&t, admin.clone());
+        async move {
+            let r = t.call(Method::PATCH, &format!("/api/accounts/{id}"), Some(&admin), Some(upd)).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        }
+    };
+    let premium = |v: bool| UpdateAccount { is_premium: Some(v), ..Default::default() };
+    let sent = || t.outbox().into_iter().filter(|m| m.subject.contains("Premium")).collect::<Vec<_>>();
+
+    // within the free plan: told, nothing to choose
+    set(premium(true)).await;
+    assert!(sent().is_empty());
+    set(premium(false)).await;
+    let mails = sent();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, "bob@example.com");
+    assert!(mails[0].text.contains("nothing changes") && !mails[0].subject.contains("choose"));
+    // setting free again sends nothing
+    set(premium(false)).await;
+    assert_eq!(sent().len(), 1);
+
+    // over it: asked to choose, with a link
+    set(premium(true)).await;
+    for name in ["A", "B"] {
+        t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: name.into() })).await;
+    }
+    set(premium(false)).await;
+    let mails = sent();
+    assert_eq!(mails.len(), 2);
+    assert!(mails[1].subject.contains("choose what you keep editing"));
+    assert!(mails[1].text.contains("read-only") && mails[1].html.contains("Choose what to keep"));
+    assert!(t.me(&bob).await.must_choose);
+    // the terms say what happens
+    assert!(t.page("/nutzungsbedingungen").await.text().contains("schreibgeschützt"));
+}
+
+#[tokio::test]
 async fn people_delete_their_own_account() {
     let t = T::with_mail();
     let admin = t.admin().await;
