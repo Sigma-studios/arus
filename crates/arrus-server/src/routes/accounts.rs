@@ -2,7 +2,8 @@
 //! admin's list of every account.
 
 use arrus_api::{
-    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, DeleteMe, MIN_PASSWORD_LEN, Me, MyTeam, PlanLimits,
+    ADMIN_USERNAME, AccountInfo, AccountTeam, ChoreographyRef, CreateAccount, DeleteMe, KeepChoice, MIN_PASSWORD_LEN, Me, MyTeam,
+    PlanLimits,
     NICKNAME_CHANGE_INTERVAL, Role, TeamRole, UpdateAccount, UpdateMe, UserPrefs,
 };
 use axum::Json;
@@ -161,7 +162,8 @@ fn my_teams(conn: &Connection, account_id: i64) -> Result<Vec<MyTeam>> {
          (SELECT COUNT(*) FROM choreographies c WHERE c.team_id = t.id), \
          t.owner_id, a.is_premium, a.is_admin, \
          (SELECT COALESCE(SUM(c.music_bytes), 0) FROM choreographies c JOIN teams o ON o.id = c.team_id \
-          WHERE o.owner_id = t.owner_id) \
+          WHERE o.owner_id = t.owner_id), \
+         t.locked \
          FROM team_members m JOIN teams t ON t.id = m.team_id LEFT JOIN accounts a ON a.id = t.owner_id \
          WHERE m.account_id = ?1 ORDER BY t.name COLLATE NOCASE, t.id",
     )?;
@@ -182,6 +184,7 @@ fn my_teams(conn: &Connection, account_id: i64) -> Result<Vec<MyTeam>> {
                 choreography_limit: plan.choreographies_per_team,
                 music_limit: plan.music_bytes,
                 music_used: if owner.is_some() { r.get::<_, i64>(8)? as u64 } else { 0 },
+                read_only: r.get(9)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -207,15 +210,21 @@ fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
             music_used: 0,
             nickname_change_from: None,
             prefs: admin_prefs(conn)?,
+            must_choose: false,
         });
     };
-    let (email, changed_at, prefs, verified_at): (Option<String>, Option<i64>, Option<String>, Option<i64>) = conn
-        .query_row(
-            "SELECT email, nickname_changed_at, prefs, email_verified_at FROM accounts WHERE id = ?1",
+    // A pending choice may have become moot (the rest was deleted).
+    db::sync_plan(conn, a.id)?;
+    let (email, changed_at, prefs, verified_at, must_choose): (Option<String>, Option<i64>, Option<String>, Option<i64>, bool) =
+        conn.query_row(
+            "SELECT email, nickname_changed_at, prefs, email_verified_at, must_choose FROM accounts WHERE id = ?1",
             [a.id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )?;
     let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
+    // read-only teams do not count toward the limit
+    let owned_editable: i64 =
+        conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1 AND NOT locked", [a.id], |r| r.get(0))?;
     let limits = PlanLimits::of(a.is_premium, a.is_admin);
     Ok(Me {
         username: a.nickname.clone(),
@@ -227,12 +236,13 @@ fn load_me(state: &AppState, conn: &Connection, user: &User) -> Result<Me> {
         mail,
         premium: a.is_premium,
         teams: my_teams(conn, a.id)?,
-        can_create_team: limits.teams.is_none_or(|l| (owned as u32) < l),
+        can_create_team: !must_choose && limits.teams.is_none_or(|l| (owned_editable as u32) < l),
         limits,
         teams_owned: owned as u32,
         music_used: db::music_used(conn, a.id)?,
         nickname_change_from: nickname_change_from(changed_at, db::now()),
         prefs: parse_prefs(prefs.as_deref()),
+        must_choose,
     })
 }
 
@@ -279,6 +289,20 @@ pub async fn update_prefs(
 
 pub async fn me(State(state): State<AppState>, auth: Auth) -> Result<Json<Me>> {
     state.db(move |s, conn| Ok(Json(load_me(s, conn, &auth.user)?))).await
+}
+
+/// After Premium ended: the team and choreographies that stay editable.
+pub async fn keep(State(state): State<AppState>, auth: Auth, ApiJson(body): ApiJson<KeepChoice>) -> Result<Json<Me>> {
+    let Some(id) = auth.user.account_id() else {
+        return Err(Error::with_code(StatusCode::CONFLICT, "no_choice_pending", "there is nothing to choose"));
+    };
+    state
+        .db(move |s, conn| {
+            db::keep(conn, id, &body)?;
+            let user = auth::load_account(conn, id)?.map(User::Account).ok_or_else(Error::not_found)?;
+            Ok(Json(load_me(s, conn, &user)?))
+        })
+        .await
 }
 
 /// Send the confirm link (again) to the logged-in account's email.
@@ -497,6 +521,9 @@ pub async fn update(
             }
             if let Some(v) = body.is_premium {
                 tx.execute("UPDATE accounts SET is_premium = ?1 WHERE id = ?2", params![v, id])?;
+            }
+            if body.is_premium.is_some() || body.is_admin.is_some() {
+                db::sync_plan(&tx, id)?;
             }
             if let Some(p) = &password {
                 tx.execute(

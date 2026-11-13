@@ -20,7 +20,8 @@ const TEAM_SELECT: &str = "SELECT t.id, t.name, t.owner_id, a.nickname, \
      (SELECT COALESCE(SUM(c.size_bytes + COALESCE(c.music_bytes, 0)), 0) FROM choreographies c WHERE c.team_id = t.id), \
      a.is_premium, a.is_admin, \
      (SELECT COALESCE(SUM(c.music_bytes), 0) FROM choreographies c JOIN teams o ON o.id = c.team_id \
-      WHERE o.owner_id = t.owner_id) \
+      WHERE o.owner_id = t.owner_id), \
+     t.locked \
      FROM teams t LEFT JOIN accounts a ON a.id = t.owner_id";
 
 fn team_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
@@ -42,6 +43,7 @@ fn team_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
         bytes_used: r.get::<_, i64>(6)? as u64,
         music_limit: plan.music_bytes,
         music_used: if owner_id.is_some() { r.get::<_, i64>(9)? as u64 } else { 0 },
+        read_only: r.get(10)?,
     })
 }
 
@@ -97,7 +99,17 @@ pub async fn create(State(state): State<AppState>, auth: Auth, ApiJson(body): Ap
             if let User::Account(a) = &user
                 && let Some(limit) = PlanLimits::of(a.is_premium, a.is_admin).teams
             {
-                let owned: i64 = conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1", [a.id], |r| r.get(0))?;
+                let must_choose: bool = conn.query_row("SELECT must_choose FROM accounts WHERE id = ?1", [a.id], |r| r.get(0))?;
+                if must_choose {
+                    return Err(Error::with_code(
+                        StatusCode::FORBIDDEN,
+                        "must_choose",
+                        "choose the team you keep editing first",
+                    ));
+                }
+                // read-only teams do not count
+                let owned: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM teams WHERE owner_id = ?1 AND NOT locked", [a.id], |r| r.get(0))?;
                 if owned as u32 >= limit {
                     return Err(Error::with_code(
                         StatusCode::FORBIDDEN,
@@ -133,6 +145,7 @@ pub async fn update(
     state
         .db(move |_, conn| {
             let owner = owner_of(conn, id)?;
+            db::ensure_team_editable(conn, id)?;
             let name = clean_team_name(conn, &body.name, owner, Some(id))?;
             conn.execute("UPDATE teams SET name = ?1 WHERE id = ?2", params![name, id])?;
             Ok(Json(load_team(conn, id)?))

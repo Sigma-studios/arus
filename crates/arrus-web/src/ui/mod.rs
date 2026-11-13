@@ -7,6 +7,7 @@ mod confirm;
 mod download;
 mod editor;
 mod inspector;
+mod keep;
 mod library;
 mod live;
 mod motion;
@@ -100,6 +101,8 @@ pub struct App {
     pub update: update::UpdateWatch,
     /// "Please confirm your email".
     pub confirm: confirm::ConfirmUi,
+    /// Premium ended: choose the team and choreographies kept editable.
+    pub keep: keep::KeepUi,
     /// "New team" dialog: the name typed, and whether it is being created.
     new_team: Option<(String, bool)>,
     pub editor: Option<Box<editor::Editor>>,
@@ -138,6 +141,7 @@ impl App {
             settings: Default::default(),
             update: Default::default(),
             confirm: Default::default(),
+            keep: Default::default(),
             new_team: None,
             editor: None,
             opening: None,
@@ -203,7 +207,14 @@ impl App {
             let r = net::get::<Me>("/api/me").await;
             move |app: &mut App| match r {
                 Ok(me) => {
+                    // Read-only states changed (Premium came back, or deleting
+                    // made the choice moot): the library shows them.
+                    let read_only = |m: &Me| (m.must_choose, m.teams.iter().map(|t| t.read_only).collect::<Vec<_>>());
+                    let changed = app.me.as_ref().map(read_only) != Some(read_only(&me));
                     app.me = Some(me);
+                    if changed {
+                        library::reload(app);
+                    }
                     let ok = app.team.is_some_and(|id| app.is_admin() || app.my_teams().iter().any(|t| t.id == id));
                     if !ok {
                         let first = app.my_teams().first().map(|t| t.id);
@@ -235,6 +246,15 @@ impl App {
     /// May change the current team's choreographies.
     pub fn can_edit(&self) -> bool {
         self.is_admin() || self.my_role().is_some_and(TeamRole::can_write)
+    }
+
+    /// The current team is read-only (its owner's Premium ended and it was not kept).
+    pub fn team_read_only(&self) -> bool {
+        let Some(id) = self.team else { return false };
+        match self.my_teams().iter().find(|t| t.id == id) {
+            Some(t) => t.read_only,
+            None => self.teams.iter().find(|t| t.id == id).is_some_and(|t| t.read_only),
+        }
     }
 
     /// May decide who is in the current team, rename or delete it.
@@ -373,6 +393,21 @@ impl App {
                     premium: false,
                 });
                 self.refresh_storage();
+            }
+            ApiError::Http { code: Some(c), .. } if c == "must_choose" => {
+                self.reload_me();
+                keep::open(self);
+            }
+            ApiError::Http { code: Some(c), .. } if c == "read_only" => {
+                self.alert = Some(Alert {
+                    title: "Read-only".into(),
+                    text: "Premium has ended and this was not kept as editable on the free plan. It can still be \
+                           opened, exported and deleted, but not changed."
+                        .into(),
+                    premium: self.on_free_plan(),
+                });
+                self.reload_me();
+                library::reload(self);
             }
             ApiError::Http { code: Some(c), .. } if c.starts_with("limit_") => {
                 let free = self.on_free_plan();
@@ -537,6 +572,9 @@ impl App {
                             }
                             if self.team.is_some() && !self.can_edit() {
                                 widgets::badge(ui, "GUEST", theme::TEXT_WEAK);
+                            } else if self.team_read_only() {
+                                widgets::badge(ui, "READ-ONLY", theme::WARN)
+                                    .on_hover_text("Premium has ended and this team was not kept: view, export and delete only");
                             }
                         }
                         if let Some(s) = &self.storage {
@@ -862,6 +900,7 @@ impl eframe::App for App {
         }
         update::bar(self, ui);
         if !in_phone_editor {
+            keep::bar(self, ui);
             confirm::bar(self, ui);
         }
         match self.screen {
@@ -886,6 +925,7 @@ impl eframe::App for App {
             }
         }
         self.new_team_dialog(&ctx);
+        keep::dialog(self, &ctx);
         account::dialog(self, &ctx);
         settings::dialog(self, &ctx);
         self.toasts_ui(&ctx);

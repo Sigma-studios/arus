@@ -1718,6 +1718,156 @@ async fn plan_limits_teams_choreographies_music() {
 }
 
 #[tokio::test]
+async fn premium_ending_keeps_one_team_and_two_choreographies_editable() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let id = t.me(&bob).await.account_id.unwrap();
+    let set_premium = |v: bool| {
+        let (t, admin) = (&t, admin.clone());
+        async move {
+            let body = UpdateAccount { is_premium: Some(v), ..Default::default() };
+            let r = t.call(Method::PATCH, &format!("/api/accounts/{id}"), Some(&admin), Some(body)).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        }
+    };
+    let list = |team: TeamId| {
+        let (t, bob) = (&t, bob.clone());
+        async move {
+            let mut l: Vec<ChoreographySummary> = t.get(&format!("/api/choreographies?team={team}"), &bob).await.json();
+            l.sort_by_key(|c| c.id);
+            l
+        }
+    };
+    let save = |c: ChoreographyId| {
+        let (t, bob) = (&t, bob.clone());
+        async move {
+            let doc: ChoreographyDoc = t.get(&format!("/api/choreographies/{c}"), &bob).await.json();
+            let body = SaveChoreography { base_revision: doc.summary.revision, data: doc.data };
+            t.call(Method::PUT, &format!("/api/choreographies/{c}"), Some(&bob), Some(body)).await
+        }
+    };
+    let keep = |team_id: Option<TeamId>, choreographies: Vec<ChoreographyId>| {
+        let (t, bob) = (&t, bob.clone());
+        async move { t.call(Method::POST, "/api/me/keep", Some(&bob), Some(KeepChoice { team_id, choreographies })).await }
+    };
+
+    // premium: two teams, three choreographies in the first, one in the second
+    set_premium(true).await;
+    let a: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "A".into() })).await.json();
+    let b: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "B".into() })).await.json();
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        ids.push(t.create(&bob, Some(a.id), sample()).await.json::<ChoreographySummary>().id);
+    }
+    let in_b = t.create(&bob, Some(b.id), sample()).await.json::<ChoreographySummary>().id;
+    // a co-owner of team A
+    let lea = t.member(&admin, a.id, "lea", true).await;
+    let lea = t.login("lea", &lea.password).await;
+    assert_eq!(keep(None, vec![]).await.error().code.as_deref(), Some("no_choice_pending"));
+
+    // premium ends: everything is read-only until bob chooses
+    set_premium(false).await;
+    let me = t.me(&bob).await;
+    assert!(me.must_choose && !me.can_create_team);
+    assert!(me.teams.iter().all(|t| t.read_only));
+    assert!(list(a.id).await.iter().all(|c| c.read_only));
+    let r = save(ids[0]).await;
+    assert_eq!((r.status, r.error().code.as_deref()), (StatusCode::FORBIDDEN, Some("read_only")));
+    let doc: ChoreographyDoc = t.get(&format!("/api/choreographies/{}", ids[0]), &lea).await.json();
+    assert!(!doc.can_write);
+    let r = t.create(&bob, Some(a.id), sample()).await;
+    assert_eq!(r.error().code.as_deref(), Some("read_only"));
+    let r = t.call(Method::PATCH, &format!("/api/teams/{}", a.id), Some(&bob), Some(UpdateTeam { name: "A2".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("read_only"));
+    let r = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "C".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("must_choose"));
+    // still readable and exportable
+    assert_eq!(t.get(&format!("/api/choreographies/{}/pdf", ids[0]), &bob).await.status, StatusCode::OK);
+
+    // bad choices
+    assert_eq!(keep(None, vec![]).await.error().code.as_deref(), Some("bad_choice"));
+    assert_eq!(keep(Some(a.id), vec![ids[0]]).await.error().code.as_deref(), Some("bad_choice"));
+    assert_eq!(keep(Some(a.id), vec![ids[0], ids[0]]).await.error().code.as_deref(), Some("bad_choice"));
+    assert_eq!(keep(Some(a.id), vec![ids[0], in_b]).await.error().code.as_deref(), Some("bad_choice"));
+    let crew = t.team(&admin, "Crew").await;
+    assert_eq!(keep(Some(crew.id), vec![]).await.error().code.as_deref(), Some("bad_choice"));
+
+    // keep team A with its first and last choreography
+    let r = keep(Some(a.id), vec![ids[0], ids[2]]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let me: Me = r.json();
+    assert!(!me.must_choose);
+    let ro = |team: TeamId| me.teams.iter().find(|t| t.id == team).unwrap().read_only;
+    assert!(!ro(a.id) && ro(b.id));
+    assert_eq!(list(a.id).await.iter().map(|c| c.read_only).collect::<Vec<_>>(), vec![false, true, false]);
+    assert!(list(b.id).await[0].read_only);
+    assert_eq!(save(ids[0]).await.status, StatusCode::OK);
+    assert_eq!(save(ids[1]).await.error().code.as_deref(), Some("read_only"));
+    assert_eq!(save(in_b).await.error().code.as_deref(), Some("read_only"));
+    let doc: ChoreographyDoc = t.get(&format!("/api/choreographies/{}", ids[2]), &lea).await.json();
+    assert!(doc.can_write);
+    // the choice is made once
+    assert_eq!(keep(Some(b.id), vec![in_b]).await.error().code.as_deref(), Some("no_choice_pending"));
+    // two editable choreographies: full; deleting a read-only one frees nothing
+    assert_eq!(t.create(&bob, Some(a.id), sample()).await.error().code.as_deref(), Some("limit_choreographies"));
+    let r = t.call(Method::DELETE, &format!("/api/choreographies/{}", ids[1]), Some(&bob), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.create(&bob, Some(a.id), sample()).await.error().code.as_deref(), Some("limit_choreographies"));
+    // deleting an editable one makes room for a new one
+    let r = t.call(Method::DELETE, &format!("/api/choreographies/{}", ids[2]), Some(&bob), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.create(&bob, Some(a.id), sample()).await.status, StatusCode::OK);
+    // the read-only team counts for nothing, but one editable team is the limit
+    assert!(!t.me(&bob).await.can_create_team);
+
+    // premium again: everything is editable
+    set_premium(true).await;
+    let me = t.me(&bob).await;
+    assert!(!me.must_choose && me.teams.iter().all(|t| !t.read_only));
+    assert_eq!(save(in_b).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn premium_ending_within_the_free_limits_changes_nothing() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let bob = t.signup("bob", "bob@example.com", "correct horse").await;
+    let id = t.me(&bob).await.account_id.unwrap();
+    let set_premium = |v: bool| {
+        let (t, admin) = (&t, admin.clone());
+        async move {
+            let body = UpdateAccount { is_premium: Some(v), ..Default::default() };
+            t.call(Method::PATCH, &format!("/api/accounts/{id}"), Some(&admin), Some(body)).await;
+        }
+    };
+    set_premium(true).await;
+    let a: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "A".into() })).await.json();
+    let b: Team = t.call(Method::POST, "/api/teams", Some(&bob), Some(CreateTeam { name: "B".into() })).await.json();
+    t.create(&bob, Some(a.id), sample()).await;
+    t.create(&bob, Some(a.id), sample()).await;
+    // one team and two choreographies fit the free plan
+    let r = t.call(Method::DELETE, &format!("/api/teams/{}", b.id), Some(&bob), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    set_premium(false).await;
+    let me = t.me(&bob).await;
+    assert!(!me.must_choose && !me.teams[0].read_only);
+
+    // over the limit, then deleting down to it settles the choice by itself
+    set_premium(true).await;
+    t.create(&bob, Some(a.id), sample()).await;
+    set_premium(false).await;
+    assert!(t.me(&bob).await.must_choose);
+    let l: Vec<ChoreographySummary> = t.get(&format!("/api/choreographies?team={}", a.id), &bob).await.json();
+    let r = t.call(Method::DELETE, &format!("/api/choreographies/{}", l[0].id), Some(&bob), None::<()>).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let me = t.me(&bob).await;
+    assert!(!me.must_choose && !me.teams[0].read_only);
+    let l: Vec<ChoreographySummary> = t.get(&format!("/api/choreographies?team={}", a.id), &bob).await.json();
+    assert!(l.iter().all(|c| !c.read_only));
+}
+
+#[tokio::test]
 async fn people_delete_their_own_account() {
     let t = T::with_mail();
     let admin = t.admin().await;

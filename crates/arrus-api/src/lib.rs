@@ -41,6 +41,7 @@
 //! | GET  | `/api/teams/{id}/invites` | | `Vec<Invite>` | owner, admin |
 //! | POST | `/api/teams/{id}/invites` | [`CreateInvite`] | [`Invite`] | owner, admin |
 //! | DELETE | `/api/invites/{token}` | | 204 | owner, admin |
+//! | POST | `/api/me/keep` | [`KeepChoice`] | [`Me`]; 409 `no_choice_pending`, 400 `bad_choice` | accounts with [`Me::must_choose`] |
 //! | DELETE | `/api/me` | [`DeleteMe`] | 204 (logged out); deletes the account and the teams it owns; 403 `wrong_password` | accounts |
 //! | GET  | `/api/accounts` | | `Vec<AccountInfo>` | admin |
 //! | POST | `/api/accounts` | [`CreateAccount`] | [`AccountInfo`] | admin |
@@ -73,6 +74,15 @@
 //! Creating a choreography in a team owned by a free account fails with 403
 //! `limit_choreographies` past its plan's limit ([`PlanLimits`]); uploading
 //! music fails with 403 `limit_music` (free plan) or `limit_music_storage`.
+//!
+//! Read-only content: when an account loses Premium while holding more than
+//! the free plan allows, all the teams it owns become read-only and it must
+//! choose ([`Me::must_choose`], `POST /api/me/keep`) the one team, and up to
+//! [`FREE_CHOREOGRAPHIES`] of its choreographies, that stay editable.
+//! Everything else stays readable, exportable and deletable, but changing it
+//! (saving, patching, music, renaming the team, creating or importing into
+//! it) fails with 403 `read_only`. Getting Premium back makes all of it
+//! editable again.
 
 pub mod patch;
 
@@ -225,6 +235,21 @@ pub struct Me {
     /// This person's own settings (colours, animation).
     #[serde(default)]
     pub prefs: UserPrefs,
+    /// Premium ended while this account held more than the free plan allows:
+    /// its teams are read-only until it picks what to keep (`POST /api/me/keep`).
+    #[serde(default)]
+    pub must_choose: bool,
+}
+
+/// What a downgraded account keeps editable: one team it owns, and exactly
+/// `min(FREE_CHOREOGRAPHIES, choreographies in it)` of that team's choreographies.
+/// `team_id: None` only when it owns no team.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct KeepChoice {
+    #[serde(default)]
+    pub team_id: Option<TeamId>,
+    #[serde(default)]
+    pub choreographies: Vec<ChoreographyId>,
 }
 
 /// Seconds between two nickname changes of an account (30 days).
@@ -294,6 +319,9 @@ pub struct MyTeam {
     /// Music in the owner's teams now.
     #[serde(default)]
     pub music_used: u64,
+    /// Read-only: its owner lost Premium and did not keep it (see the crate docs).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -312,6 +340,8 @@ pub struct Team {
     pub music_limit: Option<u64>,
     #[serde(default)]
     pub music_used: u64,
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -460,6 +490,10 @@ pub struct ChoreographySummary {
     pub formation_count: u32,
     pub dancer_count: u32,
     pub music: Option<MusicInfo>,
+    /// Read-only (it, or its team, was not kept when Premium ended): it can
+    /// be opened, exported and deleted, not changed.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -651,7 +685,8 @@ pub struct ApiError {
     /// Machine-readable reason when useful: `storage_full`, `username_taken`,
     /// `email_taken`, `name_taken`, `no_such_account`, `limit_teams`,
     /// `limit_choreographies`, `limit_music`, `limit_music_storage`, `wrong_password`, `not_arrus`, `too_big`,
-    /// `invalid_webhook`, `invalid_mention`, `no_webhook`, `nickname_too_soon`.
+    /// `invalid_webhook`, `invalid_mention`, `no_webhook`, `nickname_too_soon`,
+    /// `read_only`, `must_choose`, `no_choice_pending`, `bad_choice`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }

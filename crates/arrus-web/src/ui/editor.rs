@@ -871,8 +871,12 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 ui.add_space(6.0);
                 name_label(ui, ed, false);
                 if !ed.can_edit {
-                    widgets::badge(ui, "View only", theme::TEXT_WEAK)
-                        .on_hover_text("You can view this choreography; ask your admin for write access to edit.");
+                    let tip = if ed.summary.read_only {
+                        "Read-only: Premium has ended and this choreography was not kept as editable."
+                    } else {
+                        "You can view this choreography; ask your admin for write access to edit."
+                    };
+                    widgets::badge(ui, "View only", theme::TEXT_WEAK).on_hover_text(tip);
                 } else {
                     save_status(ui, ed, false);
                 }

@@ -78,8 +78,19 @@ pub fn readable(conn: &Connection, user: &User, id: i64) -> Result<db::ChoreoMet
     Ok(meta)
 }
 
-/// The choreography's metadata if `user` may change it (404 / 403 otherwise).
+/// The choreography's metadata if `user` may change it (404 / 403 otherwise,
+/// 403 `read_only` if it was not kept when Premium ended).
 pub fn writable(conn: &Connection, user: &User, id: i64) -> Result<db::ChoreoMeta> {
+    let meta = deletable(conn, user, id)?;
+    if meta.locked {
+        return Err(db::read_only_error());
+    }
+    Ok(meta)
+}
+
+/// The choreography's metadata if `user` may delete it (or its music): as
+/// [`writable`], but read-only ones too.
+pub fn deletable(conn: &Connection, user: &User, id: i64) -> Result<db::ChoreoMeta> {
     let meta = db::choreo_meta(conn, id)?.ok_or_else(Error::not_found)?;
     user.check_write(meta.team_id)?;
     Ok(meta)
@@ -164,7 +175,7 @@ pub async fn get(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>)
         })
         .await?;
     let data: Choreography = serde_json::from_str(&json).map_err(Error::internal)?;
-    let can_write = auth.user.check_write(summary.team_id).is_ok();
+    let can_write = auth.user.check_write(summary.team_id).is_ok() && !summary.read_only;
     Ok(Json(ChoreographyDoc { summary, data, can_write }))
 }
 
@@ -299,7 +310,7 @@ pub async fn live(
     }
     let user = auth.user.clone();
     let meta = state.db(move |_, conn| readable(conn, &user, id)).await?;
-    let can_write = auth.user.check_write(meta.team_id).is_ok();
+    let can_write = auth.user.check_write(meta.team_id).is_ok() && !meta.locked;
     let viewer = Viewer { session: q.session.clone(), username: auth.user.username(), can_write, ..Default::default() };
     // Subscribe before reading the revision, so no change falls in between.
     let (conn, rx) = state.hub.join(id, viewer);
@@ -351,7 +362,7 @@ pub async fn ws(
     }
     let user = auth.user.clone();
     let meta = state.db_live(move |_, conn| readable(conn, &user, id)).await?;
-    let can_write = auth.user.check_write(meta.team_id).is_ok();
+    let can_write = auth.user.check_write(meta.team_id).is_ok() && !meta.locked;
     Ok(upgrade
         .max_message_size(super::JSON_LIMIT)
         .on_upgrade(move |socket| live_socket(state, auth, id, q.session, can_write, socket)))
@@ -471,7 +482,7 @@ async fn send_event(socket: &mut WebSocket, ev: &LiveEvent) -> Result<(), axum::
 pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<StatusCode> {
     state
         .db(move |s, conn| {
-            let meta = writable(conn, &auth.user, id)?;
+            let meta = deletable(conn, &auth.user, id)?;
             conn.execute("DELETE FROM choreographies WHERE id = ?1", [id])?;
             s.hub.send(id, &LiveEvent::Deleted);
             storage::remove_music_files(s, meta.music_file);

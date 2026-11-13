@@ -222,12 +222,23 @@ fn welcome(app: &mut App, ui: &mut Ui) {
     });
 }
 
+/// "Read-only" next to a choreography's name.
+fn read_only_badge(ui: &mut Ui) {
+    widgets::badge(ui, "Read-only", theme::WARN)
+        .on_hover_text("Premium has ended and this was not kept as editable: open, export and delete only");
+}
+
 pub fn show(app: &mut App, ui: &mut Ui) {
-    let writer = app.can_edit();
+    // May delete; `writer` (may add and change) also needs the team editable.
+    let deleter = app.can_edit();
+    let team_read_only = app.team_read_only();
+    let writer = deleter && !team_read_only;
     let compact = app.compact;
     let ctx = ui.ctx().clone();
     let limit = app.choreography_limit();
-    let full = limit.is_some_and(|l| app.library.loaded_for.is_some() && app.library.items.len() as u32 >= l);
+    // Read-only choreographies do not count toward the limit.
+    let editable = app.library.items.iter().filter(|c| !c.read_only).count() as u32;
+    let full = limit.is_some_and(|l| app.library.loaded_for.is_some() && editable >= l);
     let full_tip = if limit.is_some_and(|l| l < arrus_api::PREMIUM_CHOREOGRAPHIES) {
         format!(
             "This team is on the free plan: {} choreographies at most. Delete one first. Premium teams hold up to {}.",
@@ -241,7 +252,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(theme::panel()).inner_margin(Margin::symmetric(if compact { 12 } else { 28 }, 18)))
         .show(ui, |ui| {
-            let (team_name, count) = (app.team_name(), app.library.items.len());
+            let (team_name, count) = (app.team_name(), editable);
             let loaded = app.library.loaded_for.is_some();
             let mut actions = None;
             widgets::screen_header(
@@ -253,7 +264,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     if let Some(t) = team_name.filter(|_| !compact) {
                         ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::TEXT_WEAK));
                     }
-                    if let Some(l) = limit
+                    if team_read_only {
+                        read_only_badge(ui);
+                    } else if let Some(l) = limit
                         && loaded
                     {
                         let color = if full { theme::WARN } else { theme::TEXT_FAINT };
@@ -334,6 +347,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 if c.music.is_some() {
                                     ui.label(RichText::new("♪").color(theme::accent()));
                                 }
+                                if c.read_only && !team_read_only {
+                                    read_only_badge(ui);
+                                }
                             });
                             ui.label(
                                 RichText::new(format!(
@@ -356,7 +372,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 if ui.button("PDF").clicked() {
                                     web::download(&format!("/api/choreographies/{}/pdf", c.id));
                                 }
-                                if writer && ui.button("Rename").clicked() {
+                                if writer && !c.read_only && ui.button("Rename").clicked() {
                                     rename = Some((c.id, c.name.clone(), false));
                                 }
                             });
@@ -371,9 +387,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     }
                     ui.end_row();
                     for c in &items {
-                        let name = ui.add(
-                            egui::Label::new(RichText::new(&c.name).strong().size(15.0)).sense(egui::Sense::click()),
-                        );
+                        let name = ui
+                            .horizontal(|ui| {
+                                let r = ui.add(
+                                    egui::Label::new(RichText::new(&c.name).strong().size(15.0)).sense(egui::Sense::click()),
+                                );
+                                if c.read_only && !team_read_only {
+                                    read_only_badge(ui);
+                                }
+                                r
+                            })
+                            .inner;
                         if name.on_hover_cursor(egui::CursorIcon::PointingHand).double_clicked() {
                             open = Some(c.id);
                         }
@@ -402,10 +426,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             if ui.button("PDF").on_hover_text("Download a PDF to share: one page per formation").clicked() {
                                 web::download(&format!("/api/choreographies/{}/pdf", c.id));
                             }
-                            if writer && ui.button("Rename").clicked() {
+                            if writer && !c.read_only && ui.button("Rename").clicked() {
                                 rename = Some((c.id, c.name.clone(), false));
                             }
-                            if writer && ui.button(RichText::new("Delete").color(theme::ERROR)).clicked() {
+                            if deleter && ui.button(RichText::new("Delete").color(theme::ERROR)).clicked() {
                                 del = Some((c.id, c.name.clone()));
                             }
                         });

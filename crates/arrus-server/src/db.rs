@@ -127,6 +127,11 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     add_column(conn, "accounts", "email_verified_at", "INTEGER")?;
     // unix seconds when the person accepted the terms of use at sign-up
     add_column(conn, "accounts", "terms_accepted_at", "INTEGER")?;
+    // Premium ended over the free limits: must pick what stays editable (see [`sync_plan`])
+    add_column(conn, "accounts", "must_choose", "INTEGER NOT NULL DEFAULT 0")?;
+    // read-only: not kept when the owner's Premium ended
+    add_column(conn, "teams", "locked", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column(conn, "choreographies", "locked", "INTEGER NOT NULL DEFAULT 0")?;
     conn.pragma_update(None, "foreign_keys", "ON")
 }
 
@@ -209,7 +214,8 @@ pub fn meta_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<(
 
 /// Columns read by [`summary_from_row`], in order.
 pub const SUMMARY_COLS: &str = "id, team_id, name, revision, updated_at, updated_by, size_bytes, \
-     formation_count, dancer_count, music_filename, music_content_type, music_bytes";
+     formation_count, dancer_count, music_filename, music_content_type, music_bytes, \
+     (locked OR COALESCE((SELECT l.locked FROM teams l WHERE l.id = choreographies.team_id), 0))";
 
 pub fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<ChoreographySummary> {
     let music_filename: Option<String> = r.get(9)?;
@@ -232,6 +238,7 @@ pub fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<ChoreographySummary> {
         formation_count: r.get::<_, i64>(7)? as u32,
         dancer_count: r.get::<_, i64>(8)? as u32,
         music,
+        read_only: r.get(12)?,
     })
 }
 
@@ -257,12 +264,15 @@ pub struct ChoreoMeta {
     pub updated_by: String,
     pub music_file: Option<String>,
     pub music_bytes: u64,
+    /// Read-only: it or its team was not kept when Premium ended.
+    pub locked: bool,
 }
 
 pub fn choreo_meta(conn: &Connection, id: i64) -> rusqlite::Result<Option<ChoreoMeta>> {
     conn.query_row(
-        "SELECT id, team_id, revision, size_bytes, uuid, creation_timestamp, updated_at, updated_by, \
-         music_file, music_bytes FROM choreographies WHERE id = ?1",
+        "SELECT c.id, c.team_id, c.revision, c.size_bytes, c.uuid, c.creation_timestamp, c.updated_at, c.updated_by, \
+         c.music_file, c.music_bytes, (c.locked OR t.locked) \
+         FROM choreographies c JOIN teams t ON t.id = c.team_id WHERE c.id = ?1",
         [id],
         |r| {
             Ok(ChoreoMeta {
@@ -276,6 +286,7 @@ pub fn choreo_meta(conn: &Connection, id: i64) -> rusqlite::Result<Option<Choreo
                 updated_by: r.get(7)?,
                 music_file: r.get(8)?,
                 music_bytes: r.get::<_, Option<i64>>(9)?.unwrap_or(0) as u64,
+                locked: r.get(10)?,
             })
         },
     )
@@ -345,10 +356,37 @@ pub fn choreography_count(conn: &Connection, team_id: i64) -> rusqlite::Result<u
         .map(|n| n as u32)
 }
 
-/// Fail with 403 `limit_choreographies` if `adding` more would pass the team's limit.
+/// Choreographies that count toward the team's limit: the editable ones.
+pub fn editable_choreography_count(conn: &Connection, team_id: i64) -> rusqlite::Result<u32> {
+    conn.query_row("SELECT COUNT(*) FROM choreographies WHERE team_id = ?1 AND NOT locked", [team_id], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n as u32)
+}
+
+pub fn team_locked(conn: &Connection, team_id: i64) -> rusqlite::Result<bool> {
+    Ok(conn.query_row("SELECT locked FROM teams WHERE id = ?1", [team_id], |r| r.get(0)).optional()?.unwrap_or(false))
+}
+
+pub fn read_only_error() -> crate::error::Error {
+    crate::error::Error::with_code(
+        axum::http::StatusCode::FORBIDDEN,
+        "read_only",
+        "this is read-only since Premium ended: it can be viewed, exported and deleted, not changed",
+    )
+}
+
+/// Fail with 403 `read_only` if the team was not kept when Premium ended.
+pub fn ensure_team_editable(conn: &Connection, team_id: i64) -> crate::error::Result<()> {
+    if team_locked(conn, team_id)? { Err(read_only_error()) } else { Ok(()) }
+}
+
+/// Fail with 403 `read_only` (team not kept) or `limit_choreographies` if
+/// `adding` more would pass the team's limit (read-only ones do not count).
 pub fn ensure_choreography_room(conn: &Connection, team_id: i64, adding: u32) -> crate::error::Result<()> {
+    ensure_team_editable(conn, team_id)?;
     if let Some(limit) = choreography_limit(conn, team_id)?
-        && choreography_count(conn, team_id)? + adding > limit
+        && editable_choreography_count(conn, team_id)? + adding > limit
     {
         return Err(crate::error::Error::with_code(
             axum::http::StatusCode::FORBIDDEN,
@@ -356,6 +394,112 @@ pub fn ensure_choreography_room(conn: &Connection, team_id: i64, adding: u32) ->
             format!("a team on this plan holds at most {limit} choreographies"),
         ));
     }
+    Ok(())
+}
+
+/// Bring what an account owns in line with its plan; call after its premium
+/// or admin flag changed (and when it is loaded, to settle a pending choice
+/// that deleting things made moot).
+///
+/// - Premium or admin: everything it owns is editable again.
+/// - Free, within the free limits (counting what is editable): nothing to do.
+/// - Free, over them (Premium just ended): every team it owns becomes
+///   read-only and it must pick what to keep ([`keep`]).
+/// - Free with a choice pending, but now owning no more than the free plan
+///   holds (it deleted the rest): all editable, no choice needed.
+pub fn sync_plan(conn: &Connection, account_id: i64) -> rusqlite::Result<()> {
+    let row: Option<(bool, bool, bool)> = conn
+        .query_row("SELECT is_premium, is_admin, must_choose FROM accounts WHERE id = ?1", [account_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?;
+    let Some((premium, admin, pending)) = row else { return Ok(()) };
+    if premium || admin {
+        return unlock_all(conn, account_id);
+    }
+    let (max_teams, max_choreos) = (arrus_api::FREE_TEAMS, arrus_api::FREE_CHOREOGRAPHIES);
+    // (teams, the most choreographies in one of them), all or editable only
+    let fits = |editable_only: bool| -> rusqlite::Result<bool> {
+        let (t, c) = if editable_only { ("AND NOT t.locked", "AND NOT c.locked") } else { ("", "") };
+        let teams: i64 =
+            conn.query_row(&format!("SELECT COUNT(*) FROM teams t WHERE t.owner_id = ?1 {t}"), [account_id], |r| r.get(0))?;
+        let most: i64 = conn.query_row(
+            &format!(
+                "SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(c.id) AS n FROM teams t \
+                 LEFT JOIN choreographies c ON c.team_id = t.id {c} WHERE t.owner_id = ?1 {t} GROUP BY t.id)"
+            ),
+            [account_id],
+            |r| r.get(0),
+        )?;
+        Ok(teams as u32 <= max_teams && most as u32 <= max_choreos)
+    };
+    if pending {
+        if fits(false)? {
+            unlock_all(conn, account_id)?;
+        }
+    } else if !fits(true)? {
+        conn.execute("UPDATE teams SET locked = 1 WHERE owner_id = ?1", [account_id])?;
+        conn.execute("UPDATE accounts SET must_choose = 1 WHERE id = ?1", [account_id])?;
+    }
+    Ok(())
+}
+
+fn unlock_all(conn: &Connection, account_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE choreographies SET locked = 0 WHERE locked AND team_id IN (SELECT id FROM teams WHERE owner_id = ?1)",
+        [account_id],
+    )?;
+    conn.execute("UPDATE teams SET locked = 0 WHERE locked AND owner_id = ?1", [account_id])?;
+    conn.execute("UPDATE accounts SET must_choose = 0 WHERE must_choose AND id = ?1", [account_id])?;
+    Ok(())
+}
+
+/// The downgraded account's pick: `team` (one it owns) and exactly
+/// `min(free limit, its choreographies)` of them stay editable; every other
+/// team it owns, and the team's other choreographies, are read-only.
+pub fn keep(conn: &mut Connection, account_id: i64, choice: &arrus_api::KeepChoice) -> crate::error::Result<()> {
+    use crate::error::Error;
+    use axum::http::StatusCode;
+    let bad = |m: &str| Error::with_code(StatusCode::BAD_REQUEST, "bad_choice", m.to_string());
+    let pending: bool = conn.query_row("SELECT must_choose FROM accounts WHERE id = ?1", [account_id], |r| r.get(0))?;
+    if !pending {
+        return Err(Error::with_code(StatusCode::CONFLICT, "no_choice_pending", "there is nothing to choose"));
+    }
+    let owned: Vec<i64> = {
+        let mut stmt = conn.prepare("SELECT id FROM teams WHERE owner_id = ?1")?;
+        stmt.query_map([account_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    let tx = conn.transaction()?;
+    match choice.team_id {
+        None if owned.is_empty() => {}
+        None => return Err(bad("choose the team to keep")),
+        Some(team) => {
+            if !owned.contains(&team) {
+                return Err(bad("you can only keep a team you own"));
+            }
+            let in_team: Vec<i64> = {
+                let mut stmt = tx.prepare("SELECT id FROM choreographies WHERE team_id = ?1")?;
+                stmt.query_map([team], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+            };
+            let mut picked = choice.choreographies.clone();
+            picked.sort_unstable();
+            picked.dedup();
+            let want = in_team.len().min(arrus_api::FREE_CHOREOGRAPHIES as usize);
+            if picked.len() != choice.choreographies.len() || picked.len() != want {
+                return Err(bad(&format!("choose {want} choreograph{} of this team", if want == 1 { "y" } else { "ies" })));
+            }
+            if !picked.iter().all(|c| in_team.contains(c)) {
+                return Err(bad("those choreographies are not all in this team"));
+            }
+            tx.execute("UPDATE teams SET locked = (id != ?2) WHERE owner_id = ?1", params![account_id, team])?;
+            tx.execute("UPDATE choreographies SET locked = 1 WHERE team_id = ?1", [team])?;
+            for c in &picked {
+                tx.execute("UPDATE choreographies SET locked = 0 WHERE id = ?1", [c])?;
+            }
+        }
+    }
+    tx.execute("UPDATE accounts SET must_choose = 0 WHERE id = ?1", [account_id])?;
+    tx.commit()?;
     Ok(())
 }
 

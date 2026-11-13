@@ -15,7 +15,7 @@ use http_body_util::BodyExt;
 use rusqlite::params;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use super::choreographies::{readable, summary, writable};
+use super::choreographies::{deletable, readable, summary, writable};
 use super::{check_content_length, upload_filename};
 use crate::activity::Kind;
 use crate::auth::Auth;
@@ -215,7 +215,7 @@ async fn stream_to_file(mut body: Body, path: &std::path::Path) -> Result<u64> {
 pub async fn delete(State(state): State<AppState>, auth: Auth, Path(id): Path<i64>) -> Result<Json<ChoreographySummary>> {
     state
         .db(move |s, conn| {
-            let meta = writable(conn, &auth.user, id)?;
+            let meta = deletable(conn, &auth.user, id)?;
             conn.execute(
                 "UPDATE choreographies SET music_file = NULL, music_filename = NULL, music_content_type = NULL, \
                  music_bytes = NULL WHERE id = ?1",

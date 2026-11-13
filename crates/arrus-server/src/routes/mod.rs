@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/me", get(accounts::me).patch(accounts::update_me).delete(accounts::delete_me))
         .route("/me/prefs", put(accounts::update_prefs))
         .route("/me/confirm-email", post(accounts::confirm_email))
+        .route("/me/keep", post(accounts::keep))
         .route("/accounts", get(accounts::list).post(accounts::create))
         .route("/accounts/{id}", patch(accounts::update).delete(accounts::delete))
         .route("/storage", get(me::storage))
