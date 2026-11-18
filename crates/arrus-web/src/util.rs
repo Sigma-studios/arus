@@ -180,6 +180,39 @@ pub fn extension(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
 }
 
+/// `#RRGGBB` for an sRGB colour.
+pub fn hex_color(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+}
+
+/// A colour typed or pasted as one line: `#RRGGBB`, `RRGGBB`, `#RGB`,
+/// `#RRGGBBAA` (alpha ignored), or the picker's own copy format
+/// `r, g, b` / `r, g, b, a` (also `rgb(r, g, b)` or space separated).
+pub fn parse_color(s: &str) -> Option<[u8; 3]> {
+    let t = s.trim();
+    let h = t.strip_prefix('#').or_else(|| t.strip_prefix("0x")).unwrap_or(t);
+    if h.chars().all(|c| c.is_ascii_hexdigit()) && matches!(h.len(), 3 | 6 | 8) {
+        let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+        return if h.len() == 3 {
+            let d = |i: usize| u8::from_str_radix(&h[i..=i], 16).ok().map(|v| v * 17);
+            Some([d(0)?, d(1)?, d(2)?])
+        } else {
+            Some([b(0)?, b(2)?, b(4)?])
+        };
+    }
+    let inner = t
+        .strip_prefix("rgba")
+        .or_else(|| t.strip_prefix("rgb"))
+        .map(|r| r.trim().trim_start_matches('(').trim_end_matches(')'))
+        .unwrap_or(t);
+    let parts: Vec<&str> = inner.split(|c: char| c == ',' || c.is_whitespace()).filter(|p| !p.is_empty()).collect();
+    if !(3..=4).contains(&parts.len()) {
+        return None;
+    }
+    let ch = |p: &str| p.parse::<u8>().ok();
+    Some([ch(parts[0])?, ch(parts[1])?, ch(parts[2])?])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +301,21 @@ mod tests {
         assert_eq!(header_filename("100%.mp3"), "100%25.mp3");
         assert_eq!(extension("a.B.ARRUS"), "arrus");
         assert_eq!(extension("noext"), "");
+    }
+
+    #[test]
+    fn colours_paste_as_one_line() {
+        assert_eq!(parse_color("#FF8000"), Some([255, 128, 0]));
+        assert_eq!(parse_color(" ff8000 "), Some([255, 128, 0]));
+        assert_eq!(parse_color("#f80"), Some([255, 136, 0]));
+        assert_eq!(parse_color("#FF8000CC"), Some([255, 128, 0]));
+        assert_eq!(parse_color("255, 128, 0"), Some([255, 128, 0]));
+        assert_eq!(parse_color("255, 128, 0, 255"), Some([255, 128, 0]));
+        assert_eq!(parse_color("rgb(255, 128, 0)"), Some([255, 128, 0]));
+        assert_eq!(parse_color("255 128 0"), Some([255, 128, 0]));
+        assert_eq!(parse_color("256, 0, 0"), None);
+        assert_eq!(parse_color("#FF80"), None);
+        assert_eq!(parse_color("red"), None);
+        assert_eq!(hex_color([255, 128, 0]), "#FF8000");
     }
 }

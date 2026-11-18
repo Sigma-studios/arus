@@ -311,6 +311,37 @@ pub fn add_prop(c: &mut Choreography, f: usize, kind: PropType) -> Option<usize>
     Some(props.len() - 1)
 }
 
+/// Marks a copied prop on the system clipboard (so it can be pasted in
+/// another tab or choreography).
+const PROP_CLIP_PREFIX: &str = "eightcount-prop:";
+
+/// A prop as clipboard text.
+pub fn prop_to_clipboard(p: &Prop) -> String {
+    format!("{PROP_CLIP_PREFIX}{}", serde_json::to_string(p).unwrap_or_default())
+}
+
+/// A prop from clipboard text, if that is what was copied.
+pub fn prop_from_clipboard(s: &str) -> Option<Prop> {
+    serde_json::from_str(s.trim().strip_prefix(PROP_CLIP_PREFIX)?).ok()
+}
+
+/// Paste a copy of `p` into formation `f`, at the same spot (moved a
+/// little if the very same prop is already there, e.g. pasted twice).
+/// Returns its index.
+pub fn paste_prop(c: &mut Choreography, f: usize, mut p: Prop) -> Option<usize> {
+    let bounds = geom::drawable_bounds(c);
+    while props(c, f).iter().any(|q| q.position == p.position && q.prop_type == p.prop_type) {
+        let next = bounds.clamp(geom::add(p.position, P::new(0.5, 0.5)));
+        if next == p.position {
+            break;
+        }
+        p.position = next;
+    }
+    let props = c.formations.get_mut(f)?.props.get_or_insert_with(Vec::new);
+    props.push(p);
+    Some(props.len() - 1)
+}
+
 pub fn props(c: &Choreography, f: usize) -> &[Prop] {
     c.formations.get(f).and_then(|f| f.props.as_deref()).unwrap_or(&[])
 }
@@ -600,4 +631,26 @@ mod tests {
         let n = add_formation_after(&mut c, 1);
         assert_eq!(c.formations[n].units[0].color, 0xFF000001);
     }
+
+    #[test]
+    fn props_copy_and_paste_into_another_formation() {
+        let mut c = new_choreography("t", "id", 0, 1);
+        add_formation_after(&mut c, 0);
+        let i = add_prop(&mut c, 0, PropType::ALL[0]).unwrap();
+        let mut p = props(&c, 0)[i].clone();
+        p.color = 0xFF112233;
+        let text = prop_to_clipboard(&p);
+        let back = prop_from_clipboard(&text).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(prop_from_clipboard("#FF0000"), None);
+
+        let n = props(&c, 1).len();
+        let j = paste_prop(&mut c, 1, back.clone()).unwrap();
+        assert_eq!(props(&c, 1).len(), n + 1);
+        assert_eq!(props(&c, 1)[j].position, p.position, "same spot in another formation");
+        // Pasted again into the same formation: moved off the first copy.
+        let k = paste_prop(&mut c, 1, back).unwrap();
+        assert_ne!(props(&c, 1)[k].position, p.position);
+    }
 }
+

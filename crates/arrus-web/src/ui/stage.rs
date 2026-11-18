@@ -447,6 +447,11 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
                             ui.close();
                         }
                     }
+                    ui.separator();
+                    if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied prop")).clicked() {
+                        ed.paste_prop(None);
+                        ui.close();
+                    }
                 });
             });
         });

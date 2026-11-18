@@ -78,15 +78,6 @@ fn hex(c: Color32) -> String {
     format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
 }
 
-fn parse_hex(s: &str) -> Option<[u8; 3]> {
-    let h = s.trim().trim_start_matches('#');
-    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
-    Some([b(0)?, b(2)?, b(4)?])
-}
-
 /// The palette for a person's settings.
 pub fn palette_of(p: &UserPrefs) -> Palette {
     let (bg, accent) = default_colors(p.light);
@@ -197,7 +188,7 @@ fn swatches(ui: &mut Ui, colors: &[(u8, u8, u8)], current: Color32) -> Option<[u
 /// A `#RRGGBB` field; returns a valid colour once typed.
 fn hex_field(ui: &mut Ui, text: &mut String) -> Option<[u8; 3]> {
     let r = ui.add(egui::TextEdit::singleline(text).desired_width(80.0).hint_text("#RRGGBB"));
-    if r.changed() { parse_hex(text) } else { None }
+    if r.changed() { crate::util::parse_color(text) } else { None }
 }
 
 pub fn dialog(app: &mut App, ctx: &egui::Context) {

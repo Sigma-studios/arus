@@ -7,7 +7,6 @@ use arrus_core::{
     Argb, DancerFillStyle, DancerShape, DefaultStageBackground, PropType, Settings, StageAspectRatio, StageBackground,
     StageBackgroundFile,
 };
-use egui::color_picker::Alpha;
 use egui::{Color32, Frame, Margin, RichText, ScrollArea, Sense, Stroke, Ui, vec2};
 
 use super::App;
@@ -123,7 +122,7 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
         ui.label("Colour");
         let mut c = to_c32(u.color);
         ui.add_enabled_ui(can, |ui| {
-            if egui::color_picker::color_edit_button_srgba(ui, &mut c, Alpha::Opaque).changed() {
+            if widgets::color_edit(ui, ("dancer", i), &mut c) {
                 let v = from_c32(c);
                 let scope = color_scope_of(ed);
                 ed.edit(Some(&format!("dcolor{i}")), |d| edit::set_dancer_color(d, i, scope, v));
@@ -199,7 +198,7 @@ fn dancers(ed: &mut Editor, ui: &mut Ui, set: &BTreeSet<usize>) {
     widgets::section(ui, "Colour");
     let first = units.first().map(|(_, u)| u.color).unwrap_or(arrus_core::DEFAULT_COLOR);
     let mut c = to_c32(first);
-    if egui::color_picker::color_edit_button_srgba(ui, &mut c, Alpha::Opaque).changed() {
+    if widgets::color_edit(ui, "dancers", &mut c) {
         let v = from_c32(c);
         let set = set.clone();
         let scope = color_scope_of(ed);
@@ -290,7 +289,7 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
         ui.label("Colour");
         let mut c = to_c32(p.color);
         ui.add_enabled_ui(can, |ui| {
-            if egui::color_picker::color_edit_button_srgba(ui, &mut c, Alpha::Opaque).changed() {
+            if widgets::color_edit(ui, ("prop", f, i), &mut c) {
                 np.color = from_c32(c);
                 changed = Some(key("color"));
             }
@@ -316,9 +315,18 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
                 .color(theme::text_faint()),
         );
         ui.add_space(8.0);
-        if widgets::danger_button(ui, "Delete prop").clicked() {
-            ed.delete_selection();
-        }
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button("Copy prop")
+                .on_hover_text("Then open another formation and paste it: Ctrl/Cmd+V, or + Prop → Paste copied prop")
+                .clicked()
+            {
+                ed.copy_prop(ui.ctx());
+            }
+            if widgets::danger_button(ui, "Delete prop").clicked() {
+                ed.delete_selection();
+            }
+        });
     }
 }
 

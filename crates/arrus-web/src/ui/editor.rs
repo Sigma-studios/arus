@@ -2,6 +2,7 @@
 //! toolbar, formation list and dialogs. The stage, inspector and timeline
 //! live in their own modules.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -14,6 +15,11 @@ use super::widgets::{self, Choice};
 use super::{App, Net, Screen, inspector, live, net, stage, timeline as timeline_ui};
 use crate::edit::{self, Selection};
 use crate::geom::{self, P};
+
+thread_local! {
+    /// The last copied prop; kept across choreographies.
+    static PROP_CLIPBOARD: RefCell<Option<arrus_core::Prop>> = const { RefCell::new(None) };
+}
 use crate::undo::{UNDO_LIMIT, UndoStack};
 use crate::view::View;
 use crate::web::{self, Audio};
@@ -408,6 +414,37 @@ impl Editor {
         self.sel = Selection::one(idx);
     }
 
+    /// Copy the selected prop (kept for "Paste prop" and put on the system
+    /// clipboard, so Cmd/Ctrl+V works in other tabs too).
+    pub fn copy_prop(&mut self, ctx: &egui::Context) -> bool {
+        let Selection::Prop(i) = self.sel else { return false };
+        let Some(p) = edit::props(&self.doc, self.cur()).get(i).cloned() else { return false };
+        ctx.copy_text(edit::prop_to_clipboard(&p));
+        PROP_CLIPBOARD.with(|c| *c.borrow_mut() = Some(p));
+        true
+    }
+
+    /// Whether a copied prop is ready to paste.
+    pub fn has_copied_prop() -> bool {
+        PROP_CLIPBOARD.with(|c| c.borrow().is_some())
+    }
+
+    /// Paste `p` (else the last copied prop) into the current formation and select it.
+    pub fn paste_prop(&mut self, p: Option<arrus_core::Prop>) -> bool {
+        let Some(p) = p.or_else(|| PROP_CLIPBOARD.with(|c| c.borrow().clone())) else { return false };
+        if !self.can_edit {
+            return false;
+        }
+        self.pause();
+        let f = self.cur();
+        let mut idx = None;
+        self.edit(None, |d| idx = edit::paste_prop(d, f, p.clone()));
+        if let Some(i) = idx {
+            self.sel = Selection::Prop(i);
+        }
+        idx.is_some()
+    }
+
     pub fn add_prop(&mut self, kind: arrus_core::PropType) {
         let f = self.cur();
         let mut idx = None;
@@ -785,6 +822,32 @@ fn keyboard(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
             ed.undo();
         }
     }
+    // Cmd/Ctrl+C / Cmd/Ctrl+V (the browser's copy and paste): props.
+    let (copy, paste) = ctx.input_mut(|i| {
+        let (mut copy, mut paste) = (false, None);
+        i.events.retain(|e| match e {
+            Event::Copy => {
+                copy = true;
+                false
+            }
+            Event::Paste(t) => {
+                paste = Some(t.clone());
+                false
+            }
+            _ => true,
+        });
+        (copy, paste)
+    });
+    if copy && ed.copy_prop(&ctx) {
+        app.toast("Prop copied: go to another formation and paste it (Ctrl/Cmd+V)");
+    }
+    if let Some(text) = paste
+        && let Some(p) = edit::prop_from_clipboard(&text)
+        && !ed.playing
+        && ed.paste_prop(Some(p))
+    {
+        app.toast(format!("Prop pasted into formation {}", ed.cur() + 1));
+    }
     // Space: play/pause on release, unless it was held to pan.
     let (pressed, released) = ctx.input_mut(|i| {
         let (mut p, mut r) = (false, false);
@@ -1006,6 +1069,11 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                                     ed.add_prop(k);
                                     ui.close();
                                 }
+                            }
+                            ui.separator();
+                            if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied prop")).clicked() {
+                                ed.paste_prop(None);
+                                ui.close();
                             }
                         });
                         ui.toggle_value(&mut ed.multi_select, "Box select")

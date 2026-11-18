@@ -206,3 +206,45 @@ pub fn meter(ui: &mut Ui, size: Vec2, fraction: f32, color: Color32) -> Response
     }
     resp
 }
+
+/// A colour button plus a one-line field that takes a pasted or typed
+/// colour (`#RRGGBB`, or `r, g, b` as the picker copies it). Clicking the
+/// field selects it all, so a paste replaces it. Returns whether `color` changed.
+pub fn color_edit(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, color: &mut Color32) -> bool {
+    use egui::text::CCursorRange;
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if egui::color_picker::color_edit_button_srgba(ui, color, egui::color_picker::Alpha::Opaque).changed() {
+            changed = true;
+        }
+        let id = ui.make_persistent_id(("color_text", id_salt));
+        let current = crate::util::hex_color([color.r(), color.g(), color.b()]);
+        let mut text = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
+        let out = egui::TextEdit::singleline(&mut text)
+            .id(id)
+            .desired_width(78.0)
+            .font(egui::TextStyle::Monospace)
+            .hint_text("#RRGGBB")
+            .show(ui);
+        let r = out.response.response.clone().on_hover_text("Paste or type a colour: #RRGGBB or r, g, b");
+        if r.gained_focus() {
+            let mut st = out.state;
+            st.cursor.set_char_range(Some(CCursorRange::select_all_str(&text)));
+            st.store(ui.ctx(), id);
+        }
+        if r.changed()
+            && let Some([red, g, b]) = crate::util::parse_color(&text)
+        {
+            *color = Color32::from_rgb(red, g, b);
+            changed = true;
+        }
+        if !r.has_focus() {
+            // Show the colour in use; a half-typed value is dropped on leaving.
+            text = crate::util::hex_color([color.r(), color.g(), color.b()]);
+        }
+        ui.data_mut(|d| d.insert_temp(id, text));
+    });
+    changed
+}
+
