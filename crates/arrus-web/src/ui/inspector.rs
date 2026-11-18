@@ -95,7 +95,7 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
     let f = ed.cur();
     let Some(u) = ed.doc.formations.get(f).and_then(|fm| fm.units.get(i)).cloned() else { return };
     let can = ed.can_edit;
-    header(ui, &format!("Dancer {}", i + 1), "Name, label, colour and shape apply in every formation.");
+    header(ui, &format!("Dancer {}", i + 1), "Name, label and shape apply in every formation; colour in this one or all.");
 
     widgets::section(ui, "Identity");
     egui::Grid::new("dancer_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -125,11 +125,15 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
         ui.add_enabled_ui(can, |ui| {
             if egui::color_picker::color_edit_button_srgba(ui, &mut c, Alpha::Opaque).changed() {
                 let v = from_c32(c);
-                ed.edit(Some(&format!("dcolor{i}")), |d| edit::edit_dancer_everywhere(d, i, |u| u.color = v));
+                let scope = color_scope_of(ed);
+                ed.edit(Some(&format!("dcolor{i}")), |d| edit::set_dancer_color(d, i, scope, v));
             }
         });
         ui.end_row();
     });
+    if can {
+        color_scope(ed, ui);
+    }
     widgets::section(ui, "Shape");
     if let Some(s) = shape_picker(ui, Some(u.shape()), to_c32(u.color), can) {
         ed.edit(None, |d| edit::edit_dancer_everywhere(d, i, |u| u.shape = Some(s.as_str().to_owned())));
@@ -160,10 +164,25 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
     }
 }
 
+/// Where a colour change goes: `Some(formation)` for the current one only, `None` for all.
+fn color_scope_of(ed: &Editor) -> Option<usize> {
+    ed.color_this_formation.then(|| ed.cur())
+}
+
+/// "Only this formation" / "All formations" for colour changes.
+fn color_scope(ed: &mut Editor, ui: &mut Ui) {
+    let f = ed.cur();
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Colour in").small().color(theme::text_weak()));
+        ui.selectable_value(&mut ed.color_this_formation, true, format!("Only formation {}", f + 1));
+        ui.selectable_value(&mut ed.color_this_formation, false, "All formations");
+    });
+}
+
 fn dancers(ed: &mut Editor, ui: &mut Ui, set: &BTreeSet<usize>) {
     let f = ed.cur();
     let can = ed.can_edit;
-    header(ui, &format!("{} dancers", set.len()), "Changes apply to all of them, in every formation.");
+    header(ui, &format!("{} dancers", set.len()), "Changes apply to all of them: shape in every formation, colour in this one or all.");
     let units: Vec<_> =
         set.iter().filter_map(|&i| ed.doc.formations.get(f).and_then(|fm| fm.units.get(i)).map(|u| (i, u.clone()))).collect();
     for (i, u) in &units {
@@ -183,12 +202,14 @@ fn dancers(ed: &mut Editor, ui: &mut Ui, set: &BTreeSet<usize>) {
     if egui::color_picker::color_edit_button_srgba(ui, &mut c, Alpha::Opaque).changed() {
         let v = from_c32(c);
         let set = set.clone();
+        let scope = color_scope_of(ed);
         ed.edit(Some("mcolor"), |d| {
             for &i in &set {
-                edit::edit_dancer_everywhere(d, i, |u| u.color = v);
+                edit::set_dancer_color(d, i, scope, v);
             }
         });
     }
+    color_scope(ed, ui);
     widgets::section(ui, "Shape");
     let shapes: BTreeSet<&str> = units.iter().map(|(_, u)| u.shape().as_str()).collect();
     let current = (shapes.len() == 1).then(|| DancerShape::parse(shapes.first().copied().unwrap_or("circle")));

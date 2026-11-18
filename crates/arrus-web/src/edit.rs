@@ -135,6 +135,19 @@ pub fn nudge_dancers(c: &mut Choreography, formation: usize, which: &BTreeSet<us
     }
 }
 
+/// Set the colour of dancer `index` in formation `f` only, or in every
+/// formation when `f` is `None`.
+pub fn set_dancer_color(c: &mut Choreography, index: usize, f: Option<usize>, color: i64) {
+    match f {
+        Some(f) => {
+            if let Some(u) = c.formations.get_mut(f).and_then(|fm| fm.units.get_mut(index)) {
+                u.color = color;
+            }
+        }
+        None => edit_dancer_everywhere(c, index, |u| u.color = color),
+    }
+}
+
 /// Apply `edit` to dancer `index` in every formation (name, colour, shape...).
 pub fn edit_dancer_everywhere(c: &mut Choreography, index: usize, mut edit: impl FnMut(&mut Unit)) {
     for f in &mut c.formations {
@@ -570,5 +583,21 @@ mod tests {
         let mut c = sample();
         c.formations[1].name = Some(" Chorus ".into());
         assert_eq!(formation_label(&c, 1), "2 · Chorus");
+    }
+
+    #[test]
+    fn dancer_colour_in_one_or_every_formation() {
+        let mut c = new_choreography("t", "id", 0, 2);
+        add_formation_after(&mut c, 0);
+        add_formation_after(&mut c, 1);
+        set_dancer_color(&mut c, 0, Some(1), 0xFF000001);
+        assert_eq!(c.formations[1].units[0].color, 0xFF000001);
+        assert_ne!(c.formations[0].units[0].color, 0xFF000001);
+        assert_ne!(c.formations[2].units[0].color, 0xFF000001);
+        set_dancer_color(&mut c, 1, None, 0xFF000002);
+        assert!(c.formations.iter().all(|f| f.units[1].color == 0xFF000002));
+        // A new formation starts with the colours of the one it follows.
+        let n = add_formation_after(&mut c, 1);
+        assert_eq!(c.formations[n].units[0].color, 0xFF000001);
     }
 }

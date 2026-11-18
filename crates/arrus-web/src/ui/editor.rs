@@ -99,6 +99,9 @@ pub struct Editor {
     pub show_next: bool,
     /// "Paths to next formation": the same, for where each dancer goes next.
     pub show_next_paths: bool,
+    /// Colour changes in the inspector apply only to the current formation
+    /// (else to every formation). Only for this screen.
+    pub color_this_formation: bool,
     /// Touch: one-finger drags on empty space draw a selection box (instead
     /// of moving the view).
     pub multi_select: bool,
@@ -204,6 +207,7 @@ impl Editor {
             timeline_collapsed: crate::web::pref(TIMELINE_COLLAPSED).as_deref() == Some("1"),
             show_next: false,
             show_next_paths: false,
+            color_this_formation: false,
             multi_select: false,
             touch: false,
             gesture: false,
