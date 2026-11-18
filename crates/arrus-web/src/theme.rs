@@ -1,12 +1,11 @@
-//! The dark theme: one palette shared by widgets and the stage painter.
+//! The theme: one palette shared by widgets and the stage painter, dark or light.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Stroke, TextStyle, Theme, Vec2};
 
 use std::cell::Cell;
 
-pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xEB);
-pub const TEXT_WEAK: Color32 = Color32::from_rgb(0xA0, 0xA0, 0xA8);
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x70, 0x70, 0x78);
+/// Light text for labels drawn on a dark backdrop, whatever the theme.
+pub const ON_DARK: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xEB);
 
 /// Selection on the stage: a cool colour that stands apart from the accent.
 pub const SELECT: Color32 = Color32::from_rgb(0x5C, 0xC8, 0xFF);
@@ -21,11 +20,17 @@ pub const DEFAULT_BG: Color32 = Color32::from_rgb(0x0B, 0x0B, 0x0C);
 /// enough for white text on a primary button.
 pub const DEFAULT_ACCENT: Color32 = Color32::from_rgb(0x92, 0x66, 0xF8);
 
-/// The colours a person can change (background and accent) and everything
-/// derived from them. Surfaces keep their default distance from the
-/// background, so a tinted background tints the whole UI and the stage.
+/// The default light-mode background (the lightest surface).
+pub const DEFAULT_LIGHT_BG: Color32 = Color32::from_rgb(0xF6, 0xF6, 0xF8);
+/// The light-mode accent: a deeper violet that reads on light panels.
+pub const DEFAULT_LIGHT_ACCENT: Color32 = Color32::from_rgb(0x6E, 0x44, 0xE0);
+
+/// The colours a person can change (background and accent, dark or light)
+/// and everything derived from them. Surfaces keep their default distance
+/// from the background, so a tinted background tints the whole UI and the stage.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {
+    pub light: bool,
     pub bg: Color32,
     pub panel: Color32,
     pub surface: Color32,
@@ -44,25 +49,57 @@ pub struct Palette {
     pub accent: Color32,
     pub accent_dim: Color32,
     pub hold_current: Color32,
+    pub text: Color32,
+    pub text_weak: Color32,
+    pub text_faint: Color32,
+    /// The strongest text (hovered / pressed widgets).
+    pub strong: Color32,
 }
 
-/// Brightest background channel allowed: the text stays light, so the
-/// background has to stay dark.
+/// Brightest background channel allowed in dark mode: the text stays
+/// light, so the background has to stay dark.
 pub const MAX_BG_CHANNEL: u8 = 0x30;
-/// Dimmest accent allowed (luma), so it still reads as text on the panels.
+/// Darkest background channel allowed in light mode.
+pub const MIN_LIGHT_BG_CHANNEL: u8 = 0xD8;
+/// Dimmest accent allowed in dark mode (luma), so it still reads as text on the panels.
 const MIN_ACCENT_LUMA: f32 = 90.0;
+/// Brightest accent allowed in light mode (luma).
+const MAX_LIGHT_ACCENT_LUMA: f32 = 130.0;
 
 impl Palette {
     pub fn new(bg: Color32, accent: Color32) -> Self {
-        let bg = clamp_background(bg);
-        let accent = clamp_accent(accent);
-        // Each surface sits where it does on the default background.
+        Self::with_mode(bg, accent, false)
+    }
+
+    /// A palette; `light` mirrors the surfaces so they get darker, not
+    /// lighter, away from the background, and switches to dark text.
+    pub fn with_mode(bg: Color32, accent: Color32, light: bool) -> Self {
+        let bg = clamp_background_for(bg, light);
+        let accent = clamp_accent_for(accent, light);
+        // Each surface sits where it does on the default background
+        // (mirrored in light mode).
         let at = |r: u8, g: u8, b: u8| {
-            let ch = |base: u8, def_base: u8, v: u8| (base as i16 + v as i16 - def_base as i16).clamp(0, 255) as u8;
             let d = DEFAULT_BG;
+            let ch = |base: u8, def_base: u8, v: u8| {
+                let off = v as i16 - def_base as i16;
+                let off = if light { -off } else { off };
+                (base as i16 + off).clamp(0, 255) as u8
+            };
             Color32::from_rgb(ch(bg.r(), d.r(), r), ch(bg.g(), d.g(), g), ch(bg.b(), d.b(), b))
         };
+        let (text, text_weak, text_faint, strong) = if light {
+            (
+                Color32::from_rgb(0x1C, 0x1C, 0x21),
+                Color32::from_rgb(0x55, 0x55, 0x5E),
+                Color32::from_rgb(0x88, 0x88, 0x91),
+                Color32::BLACK,
+            )
+        } else {
+            (ON_DARK, Color32::from_rgb(0xA0, 0xA0, 0xA8), Color32::from_rgb(0x70, 0x70, 0x78), Color32::WHITE)
+        };
+        let (dim, cur) = if light { (0.22, 0.30) } else { (0.35, 0.33) };
         Self {
+            light,
             bg,
             panel: at(0x13, 0x13, 0x15),
             surface: at(0x1A, 0x1A, 0x1D),
@@ -79,8 +116,12 @@ impl Palette {
             hold: at(0x2B, 0x2B, 0x30),
             transition: at(0x19, 0x19, 0x1C),
             accent,
-            accent_dim: lerp(bg, accent, 0.35),
-            hold_current: lerp(bg, accent, 0.33),
+            accent_dim: lerp(bg, accent, dim),
+            hold_current: lerp(bg, accent, cur),
+            text,
+            text_weak,
+            text_faint,
+            strong,
         }
     }
 }
@@ -102,6 +143,21 @@ pub fn clamp_background(c: Color32) -> Color32 {
     Color32::from_rgb(s(c.r()), s(c.g()), s(c.b()))
 }
 
+/// Lighten a background towards white until its darkest channel is at least [`MIN_LIGHT_BG_CHANNEL`].
+pub fn clamp_light_background(c: Color32) -> Color32 {
+    let min = c.r().min(c.g()).min(c.b());
+    if min >= MIN_LIGHT_BG_CHANNEL {
+        return Color32::from_rgb(c.r(), c.g(), c.b());
+    }
+    let t = (MIN_LIGHT_BG_CHANNEL - min) as f32 / (255 - min) as f32;
+    lerp(c, Color32::WHITE, t)
+}
+
+/// The background as it will be shown in the given mode.
+pub fn clamp_background_for(c: Color32, light: bool) -> Color32 {
+    if light { clamp_light_background(c) } else { clamp_background(c) }
+}
+
 /// Lighten an accent towards white until it reads on the dark panels.
 pub fn clamp_accent(c: Color32) -> Color32 {
     let mut c = Color32::from_rgb(c.r(), c.g(), c.b());
@@ -112,6 +168,23 @@ pub fn clamp_accent(c: Color32) -> Color32 {
         c = lerp(c, Color32::WHITE, 0.1);
     }
     c
+}
+
+/// Darken an accent towards black until it reads on the light panels.
+pub fn clamp_light_accent(c: Color32) -> Color32 {
+    let mut c = Color32::from_rgb(c.r(), c.g(), c.b());
+    for _ in 0..20 {
+        if luma(c) <= MAX_LIGHT_ACCENT_LUMA {
+            break;
+        }
+        c = lerp(c, Color32::BLACK, 0.1);
+    }
+    c
+}
+
+/// The accent as it will be shown in the given mode.
+pub fn clamp_accent_for(c: Color32, light: bool) -> Color32 {
+    if light { clamp_light_accent(c) } else { clamp_accent(c) }
 }
 
 fn luma(c: Color32) -> f32 {
@@ -159,13 +232,26 @@ palette_colors!(
     // Timeline
     hold, transition, hold_current,
     accent, accent_dim,
+    // Text
+    text, text_weak, text_faint, strong,
 );
+
+/// Whether the light theme is in use.
+pub fn is_light() -> bool {
+    palette().light
+}
+
+/// A faint highlight over the surfaces: white on dark, black on light.
+pub fn overlay(alpha: u8) -> Color32 {
+    if is_light() { Color32::from_black_alpha(alpha) } else { Color32::from_white_alpha(alpha) }
+}
 
 /// Install the theme. `touch` enlarges hit targets and text for phones.
 pub fn apply(ctx: &egui::Context, touch: bool) {
     let p = palette();
-    ctx.set_theme(Theme::Dark);
-    ctx.style_mut_of(Theme::Dark, |style| {
+    let mode = if p.light { Theme::Light } else { Theme::Dark };
+    ctx.set_theme(mode);
+    ctx.style_mut_of(mode, |style| {
         let base = if touch { 15.5 } else { 14.0 };
         style.text_styles = [
             (TextStyle::Small, FontId::new(base - 2.5, FontFamily::Proportional)),
@@ -188,7 +274,7 @@ pub fn apply(ctx: &egui::Context, touch: bool) {
         s.slider_width = 150.0;
 
         let v = &mut style.visuals;
-        v.dark_mode = true;
+        v.dark_mode = !p.light;
         v.panel_fill = p.panel;
         v.window_fill = p.surface;
         v.window_stroke = Stroke::new(1.0, p.border);
@@ -209,26 +295,26 @@ pub fn apply(ctx: &egui::Context, touch: bool) {
         w.noninteractive.bg_fill = p.panel;
         w.noninteractive.weak_bg_fill = p.panel;
         w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
-        w.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+        w.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
         w.noninteractive.corner_radius = r;
 
         w.inactive.bg_fill = p.raised;
         w.inactive.weak_bg_fill = p.raised;
         w.inactive.bg_stroke = Stroke::NONE;
-        w.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+        w.inactive.fg_stroke = Stroke::new(1.0, p.text);
         w.inactive.corner_radius = r;
 
         w.hovered.bg_fill = p.hover;
         w.hovered.weak_bg_fill = p.hover;
         w.hovered.bg_stroke = Stroke::new(1.0, p.hover_edge);
-        w.hovered.fg_stroke = Stroke::new(1.5, Color32::WHITE);
+        w.hovered.fg_stroke = Stroke::new(1.5, p.strong);
         w.hovered.corner_radius = r;
         w.hovered.expansion = 0.0;
 
         w.active.bg_fill = p.accent_dim;
         w.active.weak_bg_fill = p.accent_dim;
         w.active.bg_stroke = Stroke::new(1.0, p.accent);
-        w.active.fg_stroke = Stroke::new(1.5, Color32::WHITE);
+        w.active.fg_stroke = Stroke::new(1.5, p.strong);
         w.active.corner_radius = r;
         w.active.expansion = 0.0;
 
@@ -304,5 +390,24 @@ mod tests {
         assert_eq!(clamp_accent(DEFAULT_ACCENT), DEFAULT_ACCENT);
         // A light accent gets dark text on buttons.
         assert_ne!(on_color(Color32::from_rgb(0xF5, 0xE0, 0x60)), Color32::WHITE);
+    }
+
+    #[test]
+    fn light_palette_mirrors_the_surfaces() {
+        let p = Palette::with_mode(DEFAULT_LIGHT_BG, DEFAULT_LIGHT_ACCENT, true);
+        assert!(p.light);
+        assert_eq!(p.bg, DEFAULT_LIGHT_BG);
+        // Darker than the background by the dark theme's distance.
+        assert_eq!(p.panel, Color32::from_rgb(0xEE, 0xEE, 0xEF));
+        assert!(luma(p.text) < 60.0);
+        assert_eq!(p.accent, DEFAULT_LIGHT_ACCENT);
+        assert_eq!(on_color(p.accent), Color32::WHITE);
+    }
+
+    #[test]
+    fn light_colours_stay_readable() {
+        assert!(clamp_light_background(Color32::BLACK).r() >= MIN_LIGHT_BG_CHANNEL);
+        assert_eq!(clamp_light_background(Color32::WHITE), Color32::WHITE);
+        assert!(luma(clamp_light_accent(Color32::from_rgb(0xF5, 0xE0, 0x60))) <= MAX_LIGHT_ACCENT_LUMA);
     }
 }

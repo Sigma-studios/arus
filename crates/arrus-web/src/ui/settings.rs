@@ -1,4 +1,4 @@
-//! Personal settings: UI colours, the formation-switch animation, the
+//! Personal settings: the dark or light theme and its colours, the formation-switch animation, the
 //! long-move warning, and the nickname (changeable once a month).
 
 use arrus_api::{MAX_GLIDE_SECS, Me, UpdateMe, UserPrefs};
@@ -35,6 +35,30 @@ const BACKGROUNDS: [(u8, u8, u8); 8] = [
     (0x16, 0x13, 0x0C),
 ];
 
+/// Light-mode background presets: all light, so the dark text stays readable.
+const LIGHT_BACKGROUNDS: [(u8, u8, u8); 8] = [
+    (0xF6, 0xF6, 0xF8),
+    (0xFF, 0xFF, 0xFF),
+    (0xEC, 0xEC, 0xEC),
+    (0xEE, 0xF3, 0xFB),
+    (0xEE, 0xF7, 0xF1),
+    (0xF4, 0xF0, 0xFB),
+    (0xFB, 0xF0, 0xF0),
+    (0xFA, 0xF6, 0xEC),
+];
+
+/// Light-mode accent presets: deep enough to read on the light panels.
+const LIGHT_ACCENTS: [(u8, u8, u8); 8] = [
+    (0x6E, 0x44, 0xE0),
+    (0x1F, 0x63, 0xD9),
+    (0x00, 0x7C, 0x89),
+    (0x1B, 0x85, 0x55),
+    (0xB8, 0x6A, 0x00),
+    (0xC9, 0x4A, 0x1E),
+    (0xC0, 0x2B, 0x7C),
+    (0x4A, 0x4A, 0x55),
+];
+
 const ACCENTS: [(u8, u8, u8); 8] = [
     (0x92, 0x66, 0xF8),
     (0x3A, 0x86, 0xFF),
@@ -65,10 +89,17 @@ fn parse_hex(s: &str) -> Option<[u8; 3]> {
 
 /// The palette for a person's settings.
 pub fn palette_of(p: &UserPrefs) -> Palette {
-    Palette::new(
-        p.background.map_or(theme::DEFAULT_BG, rgb),
-        p.accent.map_or(theme::DEFAULT_ACCENT, rgb),
-    )
+    let (bg, accent) = default_colors(p.light);
+    Palette::with_mode(p.background.map_or(bg, rgb), p.accent.map_or(accent, rgb), p.light)
+}
+
+/// The default background and accent of the dark or light theme.
+fn default_colors(light: bool) -> (Color32, Color32) {
+    if light {
+        (theme::DEFAULT_LIGHT_BG, theme::DEFAULT_LIGHT_ACCENT)
+    } else {
+        (theme::DEFAULT_BG, theme::DEFAULT_ACCENT)
+    }
 }
 
 /// The settings in effect: the open dialog's draft (a live preview), else the saved ones.
@@ -148,9 +179,9 @@ fn swatches(ui: &mut Ui, colors: &[(u8, u8, u8)], current: Color32) -> Option<[u
             p.rect_filled(rect, 6.0, c);
             let selected = c == current;
             let stroke = if selected {
-                Stroke::new(2.0, Color32::WHITE)
+                Stroke::new(2.0, theme::strong())
             } else if resp.hovered() {
-                Stroke::new(1.5, theme::TEXT_WEAK)
+                Stroke::new(1.5, theme::text_weak())
             } else {
                 Stroke::new(1.0, theme::border())
             };
@@ -183,8 +214,27 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
     let busy = s.saving;
     let c = widgets::dialog(ctx, "user_settings", "Settings", "Done", false, !busy, |ui| {
         widgets::section(ui, "Colours");
+        ui.horizontal(|ui| {
+            ui.label("Theme");
+            let mut light = draft.light;
+            ui.selectable_value(&mut light, false, "Dark");
+            ui.selectable_value(&mut light, true, "Light");
+            if light != draft.light {
+                // Each theme has its own colours: start from its defaults.
+                draft.light = light;
+                draft.background = None;
+                draft.accent = None;
+                let (bg, accent) = default_colors(light);
+                s.bg_hex = hex(bg);
+                s.accent_hex = hex(accent);
+            }
+        });
+        let light = draft.light;
+        let (backgrounds, accents) =
+            if light { (&LIGHT_BACKGROUNDS, &LIGHT_ACCENTS) } else { (&BACKGROUNDS, &ACCENTS) };
+        ui.add_space(4.0);
         ui.label("Background");
-        if let Some(c) = swatches(ui, &BACKGROUNDS, pal.bg) {
+        if let Some(c) = swatches(ui, backgrounds, pal.bg) {
             draft.background = Some(c);
             s.bg_hex = hex(rgb(c));
         }
@@ -192,13 +242,14 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
             if let Some(c) = hex_field(ui, &mut s.bg_hex) {
                 draft.background = Some(c);
             }
-            if draft.background.is_some_and(|b| theme::clamp_background(rgb(b)) != rgb(b)) {
-                ui.label(RichText::new("darkened to keep text readable").small().color(theme::TEXT_FAINT));
+            if draft.background.is_some_and(|b| theme::clamp_background_for(rgb(b), light) != rgb(b)) {
+                let what = if light { "lightened" } else { "darkened" };
+                ui.label(RichText::new(format!("{what} to keep text readable")).small().color(theme::text_faint()));
             }
         });
         ui.add_space(6.0);
         ui.label("Accent");
-        if let Some(c) = swatches(ui, &ACCENTS, pal.accent) {
+        if let Some(c) = swatches(ui, accents, pal.accent) {
             draft.accent = Some(c);
             s.accent_hex = hex(rgb(c));
         }
@@ -206,15 +257,17 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
             if let Some(c) = hex_field(ui, &mut s.accent_hex) {
                 draft.accent = Some(c);
             }
-            if draft.accent.is_some_and(|a| theme::clamp_accent(rgb(a)) != rgb(a)) {
-                ui.label(RichText::new("lightened to stay readable").small().color(theme::TEXT_FAINT));
+            if draft.accent.is_some_and(|a| theme::clamp_accent_for(rgb(a), light) != rgb(a)) {
+                let what = if light { "darkened" } else { "lightened" };
+                ui.label(RichText::new(format!("{what} to stay readable")).small().color(theme::text_faint()));
             }
         });
         if (draft.background.is_some() || draft.accent.is_some()) && ui.button("Reset to the default colours").clicked() {
             draft.background = None;
             draft.accent = None;
-            s.bg_hex = hex(theme::DEFAULT_BG);
-            s.accent_hex = hex(theme::DEFAULT_ACCENT);
+            let (bg, accent) = default_colors(light);
+            s.bg_hex = hex(bg);
+            s.accent_hex = hex(accent);
         }
 
         widgets::section(ui, "Animation");
@@ -232,7 +285,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                 "How long the dancers take to move when you go to another formation by hand."
             })
             .small()
-            .color(theme::TEXT_FAINT),
+            .color(theme::text_faint()),
         );
 
         widgets::section(ui, "Long moves");
@@ -255,7 +308,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                 "of the stage (its longer side) in one transition. Such moves are marked in red on the stage and the timeline."
             })
             .small()
-            .color(theme::TEXT_FAINT),
+            .color(theme::text_faint()),
         );
 
         if me.account_id.is_some() {
@@ -266,7 +319,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                     ui.label(
                         RichText::new(format!("You can change it once a month: again from {}.", web::local_datetime(t)))
                             .small()
-                            .color(theme::TEXT_WEAK),
+                            .color(theme::text_weak()),
                     );
                 }
                 None => {
@@ -294,7 +347,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                         }
                     });
                     ui.label(
-                        RichText::new("You can change it once a month.").small().color(theme::TEXT_FAINT),
+                        RichText::new("You can change it once a month.").small().color(theme::text_faint()),
                     );
                 }
             }

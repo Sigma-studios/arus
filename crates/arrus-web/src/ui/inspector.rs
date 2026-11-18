@@ -56,7 +56,7 @@ fn from_c32(c: Color32) -> i64 {
 fn header(ui: &mut Ui, title: &str, sub: &str) {
     ui.label(RichText::new(title).strong().size(16.0));
     if !sub.is_empty() {
-        ui.label(RichText::new(sub).small().color(theme::TEXT_WEAK));
+        ui.label(RichText::new(sub).small().color(theme::text_weak()));
     }
     ui.add_space(4.0);
 }
@@ -150,7 +150,7 @@ fn dancer(ed: &mut Editor, ui: &mut Ui, i: usize) {
     ui.label(
         RichText::new("x runs across the stage (towards stage right), y from the back edge (0) to the audience.")
             .small()
-            .color(theme::TEXT_FAINT),
+            .color(theme::text_faint()),
     );
     if can {
         ui.add_space(10.0);
@@ -292,7 +292,7 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
         ui.label(
             RichText::new("Drag to move, drag the corners to resize, the round knob to rotate (snaps to 15°; hold Shift for free rotation).")
                 .small()
-                .color(theme::TEXT_FAINT),
+                .color(theme::text_faint()),
         );
         ui.add_space(8.0);
         if widgets::danger_button(ui, "Delete prop").clicked() {
@@ -322,7 +322,7 @@ fn view_toggles(ui: &mut Ui, s: &mut Settings, next: &mut bool, next_paths: &mut
     cb(ui, &mut s.is_scene_directions_inverted, "View from audience", "Rotate the stage 180°: backstage at the top");
     cb(ui, &mut s.is_backstage_shown, "Backstage", "Turn the outer cells of the grid into backstage (always on when the stage settings set a backstage)");
     cb(ui, &mut s.is_dancer_names_shown, "Dancer names", "");
-    cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Small numbers next to dancers whose label is not their number");
+    cb(ui, &mut s.is_dancer_indexes_shown, "Dancer numbers", "Show each dancer's number (inside the dancer with the Numbers label, else next to it)");
     const LOCAL: &str = "Only on this screen; off each time you open a choreography";
     cb(ui, &mut s.is_ghost_dancers_shown, "Previous formation (ghosts)", "");
     ui.checkbox(next, "Next formation (ghosts)").on_hover_text(LOCAL);
@@ -377,7 +377,7 @@ fn settings(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                 ed.doc.grid_size.rows,
                 ed.doc.grid_size.columns
             ))
-            .color(theme::TEXT_WEAK),
+            .color(theme::text_weak()),
         );
     }
 
@@ -427,7 +427,7 @@ fn settings(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         ui.selectable_value(&mut ed.easing, Easing::Linear, "Linear");
         ui.selectable_value(&mut ed.easing, Easing::InOut, "Smooth");
     });
-    ui.label(RichText::new("Transition easing, for this browser only (not saved).").small().color(theme::TEXT_FAINT));
+    ui.label(RichText::new("Transition easing, for this browser only (not saved).").small().color(theme::text_faint()));
 
     if !can {
         return;

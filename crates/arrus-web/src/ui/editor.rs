@@ -852,7 +852,7 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     // live in the row at the bottom (see `tool_row`).
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if !ed.can_edit {
-                            widgets::badge(ui, "View only", theme::TEXT_WEAK);
+                            widgets::badge(ui, "View only", theme::text_weak());
                         }
                         if ed.can_edit {
                             if ui.add_enabled(ed.can_redo(), egui::Button::new("↷")).clicked() {
@@ -876,7 +876,7 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     } else {
                         "You can view this choreography; ask your admin for write access to edit."
                     };
-                    widgets::badge(ui, "View only", theme::TEXT_WEAK).on_hover_text(tip);
+                    widgets::badge(ui, "View only", theme::text_weak()).on_hover_text(tip);
                 } else {
                     save_status(ui, ed, false);
                 }
@@ -938,13 +938,13 @@ fn save_status(ui: &mut Ui, ed: &Editor, compact: bool) {
     let (text, color, tip) = if ed.live.offline {
         ("Offline – changes will be saved when back online", theme::WARN, "Not connected; your changes are kept and sent automatically.")
     } else if ed.live.saving() {
-        ("Saving…", theme::TEXT_WEAK, "Your changes are being saved.")
+        ("Saving…", theme::text_weak(), "Your changes are being saved.")
     } else {
-        ("All changes saved", theme::TEXT_FAINT, "Every change is saved automatically.")
+        ("All changes saved", theme::text_faint(), "Every change is saved automatically.")
     };
     if compact {
         let (r, resp) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-        let dot = if ed.live.offline { theme::WARN } else if ed.live.saving() { theme::TEXT_WEAK } else { theme::OK };
+        let dot = if ed.live.offline { theme::WARN } else if ed.live.saving() { theme::text_weak() } else { theme::OK };
         ui.painter().circle_filled(r.center(), 4.0, dot);
         resp.on_hover_text(text);
         return;
@@ -1047,7 +1047,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
     let n = ed.doc.formations.len();
     ui.horizontal(|ui| {
         widgets::section(ui, "Formations");
-        ui.label(RichText::new(n.to_string()).small().color(theme::TEXT_FAINT));
+        ui.label(RichText::new(n.to_string()).small().color(theme::text_faint()));
     });
     let row_h = if ed.compact { 44.0 } else { 32.0 };
     let list_h = (ui.available_height() * if ed.can_edit { 0.45 } else { 0.6 }).max(120.0);
@@ -1076,7 +1076,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
             let num_c = rect.left_center() + vec2(18.0, 0.0);
             let num_fill = if selected { theme::accent() } else { theme::raised() };
             p.circle_filled(num_c, 11.0, num_fill);
-            let num_text = if selected { theme::on_color(num_fill) } else { theme::TEXT };
+            let num_text = if selected { theme::on_color(num_fill) } else { theme::text() };
             p.text(num_c, egui::Align2::CENTER_CENTER, (i + 1).to_string(), egui::FontId::proportional(12.0), num_text);
             let name = f.name.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
             let dur = util::fmt_secs(f.duration);
@@ -1085,7 +1085,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
                 egui::Align2::RIGHT_CENTER,
                 &dur,
                 egui::FontId::proportional(12.5),
-                theme::TEXT_WEAK,
+                theme::text_weak(),
             );
             if !name.is_empty() {
                 let clip = egui::Rect::from_min_max(rect.min + vec2(36.0, 0.0), egui::pos2(right.left() - 6.0, rect.max.y));
@@ -1094,7 +1094,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
                     egui::Align2::LEFT_CENTER,
                     name,
                     egui::FontId::proportional(14.0),
-                    theme::TEXT,
+                    theme::text(),
                 );
             }
             if !f.comments.is_empty() {
@@ -1240,7 +1240,7 @@ fn formations_ui(ed: &mut Editor, ui: &mut Ui) {
                     util::fmt_secs(f.duration),
                     if cur > 0 { format!(" · transition {}", util::fmt_secs(f.transition_duration)) } else { String::new() }
                 ))
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
             );
             for c in f.comments.iter().filter(|c| !c.text.trim().is_empty()) {
                 ui.add_space(4.0);

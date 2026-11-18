@@ -181,7 +181,7 @@ fn welcome(app: &mut App, ui: &mut Ui) {
         widgets::fit_modal(ui, 460.0);
         ui.label(RichText::new(format!("Welcome, {}", me.username)).size(20.0).strong());
         ui.add_space(6.0);
-        ui.label(RichText::new("You're not in a team yet.").color(theme::TEXT_WEAK));
+        ui.label(RichText::new("You're not in a team yet.").color(theme::text_weak()));
         ui.add_space(14.0);
         if me.can_create_team {
             widgets::card().show(ui, |ui| {
@@ -206,7 +206,7 @@ fn welcome(app: &mut App, ui: &mut Ui) {
                             arrus_api::FREE_CHOREOGRAPHIES
                         ))
                         .small()
-                        .color(theme::TEXT_WEAK),
+                        .color(theme::text_weak()),
                     );
                 }
             });
@@ -217,7 +217,7 @@ fn welcome(app: &mut App, ui: &mut Ui) {
                 "To join someone's team, give them your nickname ({}) or open the share link they send you.",
                 me.username
             ))
-            .color(theme::TEXT_WEAK),
+            .color(theme::text_weak()),
         );
     });
 }
@@ -262,14 +262,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.heading("Choreographies");
                     // On a phone the team is already in the top bar.
                     if let Some(t) = team_name.filter(|_| !compact) {
-                        ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::TEXT_WEAK));
+                        ui.label(RichText::new(format!("· {t}")).size(18.0).color(theme::text_weak()));
                     }
                     if team_read_only {
                         read_only_badge(ui);
                     } else if let Some(l) = limit
                         && loaded
                     {
-                        let color = if full { theme::WARN } else { theme::TEXT_FAINT };
+                        let color = if full { theme::WARN } else { theme::text_faint() };
                         ui.label(RichText::new(format!("{count} of {l} (free plan)")).small().color(color)).on_hover_text(&full_tip);
                     }
                 },
@@ -297,7 +297,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.add_space(30.0);
                     ui.vertical_centered(|ui| {
                         ui.label(RichText::new("No team yet.").size(16.0));
-                        ui.label(RichText::new("Create a team in All teams first.").color(theme::TEXT_WEAK));
+                        ui.label(RichText::new("Create a team in All teams first.").color(theme::text_weak()));
                     });
                 } else {
                     welcome(app, ui);
@@ -319,7 +319,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         } else {
                             "Choreographies the team's owner and co-owners add will appear here."
                         })
-                        .color(theme::TEXT_WEAK),
+                        .color(theme::text_weak()),
                     );
                 });
                 return;
@@ -359,7 +359,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                     updated(now, c)
                                 ))
                                 .small()
-                                .color(theme::TEXT_WEAK),
+                                .color(theme::text_weak()),
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
@@ -383,7 +383,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 }
                 egui::Grid::new("library_grid").striped(true).spacing([18.0, 10.0]).min_col_width(40.0).show(ui, |ui| {
                     for h in ["Name", "Formations", "Dancers", "Updated", "Music", "Size", ""] {
-                        ui.label(RichText::new(h).small().strong().color(theme::TEXT_FAINT));
+                        ui.label(RichText::new(h).small().strong().color(theme::text_faint()));
                     }
                     ui.end_row();
                     for c in &items {
@@ -403,7 +403,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         }
                         ui.label(c.formation_count.to_string());
                         ui.label(c.dancer_count.to_string());
-                        ui.label(RichText::new(updated(now, c)).color(theme::TEXT_WEAK))
+                        ui.label(RichText::new(updated(now, c)).color(theme::text_weak()))
                             .on_hover_text(web::local_datetime(c.updated_at));
                         match &c.music {
                             Some(m) => {
@@ -411,11 +411,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                     .on_hover_text(format!("{} ({})", m.filename, util::fmt_bytes(m.bytes)));
                             }
                             None => {
-                                ui.label(RichText::new("–").color(theme::TEXT_FAINT));
+                                ui.label(RichText::new("–").color(theme::text_faint()));
                             }
                         }
                         let size = c.size_bytes + c.music.as_ref().map_or(0, |m| m.bytes);
-                        ui.label(RichText::new(util::fmt_bytes(size)).color(theme::TEXT_WEAK));
+                        ui.label(RichText::new(util::fmt_bytes(size)).color(theme::text_weak()));
                         ui.horizontal(|ui| {
                             if widgets::primary_button(ui, "Open").clicked() {
                                 open = Some(c.id);
@@ -513,7 +513,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
             ui.label(
                 RichText::new("Dancers start in centred rows on a 14 × 8 stage; you can add, remove and move them later.")
                     .small()
-                    .color(theme::TEXT_WEAK),
+                    .color(theme::text_weak()),
             );
         });
         match choice {
@@ -535,7 +535,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
     if let Some((id, name)) = app.library.confirm_delete.clone() {
         match widgets::dialog(ctx, "del_choreo", "Delete choreography?", "Delete", true, true, |ui| {
             ui.label(format!("“{name}” and its music will be deleted for the whole team. This cannot be undone."));
-            ui.label(RichText::new("Tip: Export it first to keep a copy.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("Tip: Export it first to keep a copy.").small().color(theme::text_weak()));
         }) {
             Some(Choice::Confirm) => {
                 app.library.confirm_delete = None;
@@ -567,7 +567,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                 });
             }
             for n in &rep.notes {
-                ui.label(RichText::new(n).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(n).color(theme::text_weak()));
             }
             for e in &rep.errors {
                 ui.label(RichText::new(e).color(theme::ERROR));

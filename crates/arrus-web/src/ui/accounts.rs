@@ -142,7 +142,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 compact,
                 |ui| {
                     ui.heading("Accounts");
-                    ui.label(RichText::new(count.to_string()).size(18.0).color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(count.to_string()).size(18.0).color(theme::text_weak()));
                 },
                 |ui| {
                     create = widgets::primary_button(ui, "+ Create account").clicked();
@@ -168,7 +168,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let q = app.accounts.search.trim().to_lowercase();
             let shown: Vec<AccountInfo> = app.accounts.list.iter().filter(|a| matches(a, &q)).cloned().collect();
             if shown.is_empty() && !app.accounts.loading {
-                ui.label(RichText::new(if q.is_empty() { "No accounts yet." } else { "No account matches." }).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(if q.is_empty() { "No accounts yet." } else { "No account matches." }).color(theme::text_weak()));
             }
             let my_id = app.me.as_ref().and_then(|m| m.account_id);
             ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -196,14 +196,14 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
                 widgets::badge(ui, "PREMIUM", theme::accent());
             }
             match &a.email {
-                Some(e) => ui.label(RichText::new(e).color(theme::TEXT_WEAK)),
-                None => ui.label(RichText::new("no email").color(theme::TEXT_FAINT)),
+                Some(e) => ui.label(RichText::new(e).color(theme::text_weak())),
+                None => ui.label(RichText::new("no email").color(theme::text_faint())),
             };
-            ui.label(RichText::new(format!("since {}", web::local_datetime(a.created_at))).small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new(format!("since {}", web::local_datetime(a.created_at))).small().color(theme::text_faint()));
         });
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Password").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("Password").small().color(theme::text_faint()));
             match &a.password {
                 Some(p) => {
                     ui.label(RichText::new(p).monospace());
@@ -213,7 +213,7 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
                     }
                 }
                 None => {
-                    ui.label(RichText::new("chosen by them (hidden)").color(theme::TEXT_WEAK))
+                    ui.label(RichText::new("chosen by them (hidden)").color(theme::text_weak()))
                         .on_hover_text("People's own passwords are stored encrypted. Set a new one to see it.");
                 }
             }
@@ -250,7 +250,7 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
             if n == 1 { "y" } else { "ies" }
         );
         if a.teams.is_empty() {
-            ui.label(RichText::new("In no team").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("In no team").small().color(theme::text_faint()));
             return;
         }
         egui::CollapsingHeader::new(RichText::new(title).small())
@@ -261,12 +261,12 @@ fn account_card(app: &mut App, ui: &mut Ui, a: &AccountInfo, is_me: bool) {
                         if ui.link(RichText::new(&t.name).strong()).on_hover_text("Open this team's library").clicked() {
                             open_team = Some(t.team_id);
                         }
-                        let color = if t.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() };
+                        let color = if t.role == TeamRole::Guest { theme::text_weak() } else { theme::accent() };
                         widgets::badge(ui, t.role.label(), color);
                     });
                     ui.indent(("account_team", a.id, t.team_id), |ui| {
                         if t.choreographies.is_empty() {
-                            ui.label(RichText::new("no choreographies").small().color(theme::TEXT_FAINT));
+                            ui.label(RichText::new("no choreographies").small().color(theme::text_faint()));
                         }
                         ui.horizontal_wrapped(|ui| {
                             for c in &t.choreographies {
@@ -336,7 +336,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                 ui.add(egui::TextEdit::singleline(email).hint_text("none").desired_width(220.0));
                 ui.end_row();
             });
-            ui.label(RichText::new("They log in with either.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("They log in with either.").small().color(theme::text_weak()));
         });
         let body = UpdateAccount {
             nickname: Some(nickname.trim().to_owned()),
@@ -364,7 +364,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                     "At least {MIN_PASSWORD_LEN} characters. You keep seeing it until they change it; they are logged out everywhere."
                 ))
                 .small()
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
             );
         });
         let body = UpdateAccount { password: Some(pw.trim().to_owned()), ..Default::default() };
@@ -404,7 +404,7 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                     .color(theme::ERROR),
                 );
             }
-            ui.label(RichText::new("This cannot be undone.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("This cannot be undone.").small().color(theme::text_weak()));
         }) {
             Some(Choice::Confirm) => {
                 app.accounts.delete = None;

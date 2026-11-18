@@ -55,7 +55,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new("More teams, more choreographies, and your music in every formation.")
-                            .color(theme::TEXT_WEAK),
+                            .color(theme::text_weak()),
                     );
                 });
                 ui.add_space(18.0);
@@ -105,31 +105,31 @@ fn plan_card(ui: &mut Ui, premium: bool, current: bool) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             let name = if premium { "Premium" } else { "Free" };
-            ui.label(RichText::new(name).size(22.0).strong().color(if premium { accent } else { theme::TEXT }));
+            ui.label(RichText::new(name).size(22.0).strong().color(if premium { accent } else { theme::text() }));
             if current {
-                widgets::badge(ui, "YOUR PLAN", if premium { accent } else { theme::TEXT_WEAK });
+                widgets::badge(ui, "YOUR PLAN", if premium { accent } else { theme::text_weak() });
             }
         });
         ui.add_space(4.0);
         if premium {
-            ui.label(RichText::new("Coming soon").size(20.0).strong().color(theme::TEXT));
-            ui.label(RichText::new("Price to be announced").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("Coming soon").size(20.0).strong().color(theme::text()));
+            ui.label(RichText::new("Price to be announced").small().color(theme::text_weak()));
         } else {
-            ui.label(RichText::new("0 €").size(20.0).strong().color(theme::TEXT));
-            ui.label(RichText::new("Free, forever").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("0 €").size(20.0).strong().color(theme::text()));
+            ui.label(RichText::new("Free, forever").small().color(theme::text_weak()));
         }
         ui.add_space(12.0);
         for (feature, free, paid) in features() {
             let cell = if premium { paid } else { free };
             let (mark, color, text, has) = match cell {
                 Cell::Yes(t) => ("✔", theme::OK, t, true),
-                Cell::No(t) => ("✖", theme::TEXT_FAINT, t, false),
+                Cell::No(t) => ("✖", theme::text_faint(), t, false),
             };
             ui.horizontal_top(|ui| {
                 ui.label(RichText::new(mark).color(color));
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(feature).color(theme::TEXT_WEAK).small());
-                    ui.label(if has { RichText::new(text) } else { RichText::new(text).color(theme::TEXT_FAINT) });
+                    ui.label(RichText::new(feature).color(theme::text_weak()).small());
+                    ui.label(if has { RichText::new(text) } else { RichText::new(text).color(theme::text_faint()) });
                 });
             });
             ui.add_space(4.0);
@@ -150,7 +150,7 @@ fn plan_card(ui: &mut Ui, premium: bool, current: bool) {
                 ui.label(
                     RichText::new(format!("Want premium already? Write to {CONTACT}."))
                         .small()
-                        .color(theme::TEXT_WEAK),
+                        .color(theme::text_weak()),
                 );
             }
         } else {
@@ -172,7 +172,7 @@ fn usage_card(ui: &mut Ui, me: &arrus_api::Me) {
         widgets::section(ui, "What you use");
         let row = |ui: &mut Ui, label: &str, used: f64, limit: Option<f64>, text: String| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(label).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(label).color(theme::text_weak()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(text);
                     if let Some(l) = limit.filter(|l| *l > 0.0) {

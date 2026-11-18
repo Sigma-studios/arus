@@ -51,13 +51,13 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
                 ui.add_space(8.0);
                 let label = formation_label(ed);
                 if !compact {
-                    ui.label(RichText::new(&label).color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(&label).color(theme::text_weak()));
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if compact {
                         if let Some(m) = &ed.summary.music {
-                            ui.add(egui::Label::new(RichText::new(format!("♪ {}", m.filename)).small().color(theme::TEXT_WEAK)).truncate());
+                            ui.add(egui::Label::new(RichText::new(format!("♪ {}", m.filename)).small().color(theme::text_weak())).truncate());
                         }
                         return;
                     }
@@ -87,18 +87,18 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) -> Option<MusicAction> {
                             if ui.add_enabled(!ed.music_busy, egui::Button::new("♪ Add music…")).clicked() {
                                 action = Some(MusicAction::Upload);
                             }
-                            ui.label(RichText::new("ⓘ").color(theme::TEXT_FAINT)).on_hover_text(NO_MUSIC_EXPORT);
-                            ui.label(RichText::new("The phone app doesn't export music").small().color(theme::TEXT_FAINT));
+                            ui.label(RichText::new("ⓘ").color(theme::text_faint())).on_hover_text(NO_MUSIC_EXPORT);
+                            ui.label(RichText::new("The phone app doesn't export music").small().color(theme::text_faint()));
                         }
                         (None, false) => {
-                            ui.label(RichText::new("No music").small().color(theme::TEXT_FAINT));
+                            ui.label(RichText::new("No music").small().color(theme::text_faint()));
                         }
                     }
                 });
             });
             if compact {
                 let label = formation_label(ed);
-                ui.add(egui::Label::new(RichText::new(label).color(theme::TEXT_WEAK)).truncate());
+                ui.add(egui::Label::new(RichText::new(label).color(theme::text_weak())).truncate());
             }
             ui.add_space(6.0);
             bar(ed, ui);
@@ -159,7 +159,7 @@ fn show_compact(ed: &mut Editor, ui: &mut Ui) {
                     RichText::new(format!("{} / {}", util::fmt_time(ed.t), util::fmt_time(ed.timeline_len())))
                         .monospace()
                         .size(12.5)
-                        .color(theme::TEXT_WEAK),
+                        .color(theme::text_weak()),
                 );
                 // The timeline open / closed, at the right end.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -225,8 +225,8 @@ fn transport_button(ui: &mut Ui, size: egui::Vec2, icon: Icon, fill: Option<Colo
     let s = r.rect.height().min(r.rect.width()) * 0.2;
     let col = match fill {
         Some(f) => theme::on_color(f),
-        None if r.hovered() => Color32::WHITE,
-        None => theme::TEXT,
+        None if r.hovered() => theme::strong(),
+        None => theme::text(),
     };
     let p = ui.painter();
     let tri = |pts: Vec<egui::Pos2>| egui::Shape::convex_polygon(pts, col, Stroke::NONE);
@@ -258,7 +258,7 @@ fn transport_button(ui: &mut Ui, size: egui::Vec2, icon: Icon, fill: Option<Colo
 }
 
 fn music_label(ui: &mut Ui, name: &str, bytes: u64) {
-    ui.label(RichText::new(format!("♪ {name}")).color(theme::TEXT)).on_hover_text(format!(
+    ui.label(RichText::new(format!("♪ {name}")).color(theme::text())).on_hover_text(format!(
         "{} · {}",
         util::fmt_bytes(bytes),
         NO_MUSIC_EXPORT
@@ -290,7 +290,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
             while x < tr.right() {
                 clip.line_segment(
                     [pos2(x, tr.bottom()), pos2(x + tr.height(), tr.top())],
-                    Stroke::new(1.0, Color32::from_white_alpha(14)),
+                    Stroke::new(1.0, theme::overlay(14)),
                 );
                 x += 7.0;
             }
@@ -337,7 +337,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
                     Align2::LEFT_CENTER,
                     text,
                     FontId::proportional(12.5),
-                    if selected { theme::TEXT } else { theme::TEXT_WEAK },
+                    if selected { theme::text() } else { theme::text_weak() },
                 );
             }
         } else {
@@ -351,9 +351,9 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
     let total = ed.total();
     if len > total + 0.01 {
         let r = Rect::from_min_max(pos2(time_to_x(total, len, rect) + 1.0, inner.top()), pos2(rect.right(), inner.bottom()));
-        p.rect_filled(r, 3.0, Color32::from_white_alpha(6));
+        p.rect_filled(r, 3.0, theme::overlay(6));
         if r.width() > 60.0 {
-            p.text(r.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, "music continues", FontId::proportional(11.5), theme::TEXT_FAINT);
+            p.text(r.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, "music continues", FontId::proportional(11.5), theme::text_faint());
         }
     }
 
@@ -366,7 +366,7 @@ fn bar(ed: &mut Editor, ui: &mut Ui) {
     ed.scrubbing = resp.is_pointer_button_down_on();
     if let Some(hp) = resp.hover_pos() {
         let ht = x_to_time(hp.x, len, rect);
-        p.line_segment([pos2(hp.x, rect.top()), pos2(hp.x, rect.bottom())], Stroke::new(1.0, Color32::from_white_alpha(40)));
+        p.line_segment([pos2(hp.x, rect.top()), pos2(hp.x, rect.bottom())], Stroke::new(1.0, theme::overlay(40)));
         resp.clone().on_hover_text_at_pointer(util::fmt_time(ht));
     }
 

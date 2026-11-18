@@ -258,7 +258,11 @@ pub const NICKNAME_CHANGE_INTERVAL: i64 = 30 * 24 * 3600;
 /// Personal settings, kept on the server so they follow the account.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserPrefs {
-    /// UI background colour (sRGB); `None`: the default. Kept dark.
+    /// Light theme instead of the dark one.
+    #[serde(default)]
+    pub light: bool,
+    /// UI background colour (sRGB); `None`: the default. Kept dark (light
+    /// in the light theme).
     #[serde(default)]
     pub background: Option<[u8; 3]>,
     /// Accent colour (sRGB); `None`: the default violet.
@@ -289,7 +293,7 @@ fn default_long_move_warn() -> f64 {
 
 impl Default for UserPrefs {
     fn default() -> Self {
-        Self { background: None, accent: None, glide_secs: DEFAULT_GLIDE_SECS, long_move_warn: DEFAULT_LONG_MOVE_WARN }
+        Self { light: false, background: None, accent: None, glide_secs: DEFAULT_GLIDE_SECS, long_move_warn: DEFAULT_LONG_MOVE_WARN }
     }
 }
 

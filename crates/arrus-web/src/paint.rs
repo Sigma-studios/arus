@@ -127,7 +127,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
         let stroke = if selected {
             Stroke::new(2.0, theme::SELECT)
         } else if s.hover_prop == Some(i) {
-            Stroke::new(1.5, Color32::from_white_alpha(160))
+            Stroke::new(1.5, theme::overlay(160))
         } else {
             Stroke::new(1.0, theme::argb(p.color, 1.0).gamma_multiply(0.6))
         };
@@ -234,13 +234,14 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
         if selected {
             painter.circle_stroke(v.to_screen(d.position), rpx + 4.0, Stroke::new(2.5, theme::SELECT));
         } else if hovered {
-            painter.circle_stroke(v.to_screen(d.position), rpx + 3.0, Stroke::new(1.5, Color32::from_white_alpha(140)));
+            painter.circle_stroke(v.to_screen(d.position), rpx + 3.0, Stroke::new(1.5, theme::overlay(140)));
         }
         draw_shape(painter, v, d.position, radius, u.shape(), fill, outline);
 
         let center = v.to_screen(d.position);
         let label = match fill_style {
-            DancerFillStyle::Indexed => Some((d.index + 1).to_string()),
+            // Numbers only when "Dancer numbers" is on.
+            DancerFillStyle::Indexed => set.is_dancer_indexes_shown.then(|| (d.index + 1).to_string()),
             DancerFillStyle::ShortNamed => u.short_name.clone().filter(|s| !s.trim().is_empty()),
             DancerFillStyle::Solid => None,
         };
@@ -259,16 +260,16 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
                 Align2::LEFT_BOTTOM,
                 (d.index + 1).to_string(),
                 FontId::proportional(size),
-                theme::TEXT.gamma_multiply(op),
+                theme::text().gamma_multiply(op),
             );
         }
         if set.is_dancer_names_shown && !u.dancer.name.trim().is_empty() {
             let size = (rpx * 0.6).clamp(9.0, 18.0) * label_mult;
             let pos = center + vec2(0.0, rpx + 2.0);
-            let galley = painter.layout_no_wrap(u.dancer.name.clone(), FontId::proportional(size), theme::TEXT);
+            let galley = painter.layout_no_wrap(u.dancer.name.clone(), FontId::proportional(size), theme::ON_DARK);
             let r = Align2::CENTER_TOP.anchor_size(pos, galley.size()).expand2(vec2(3.0, 0.0));
             painter.rect_filled(r, 3.0, Color32::from_black_alpha((120.0 * op) as u8));
-            painter.galley(r.min + vec2(3.0, 0.0), galley, theme::TEXT.gamma_multiply(op));
+            painter.galley(r.min + vec2(3.0, 0.0), galley, theme::ON_DARK.gamma_multiply(op));
         }
     }
 
@@ -349,7 +350,7 @@ pub fn shape_icon(painter: &Painter, rect: Rect, shape: arrus_core::DancerShape,
 fn hatch(painter: &Painter, r: Rect, strength: f32) {
     let p = painter.with_clip_rect(r.intersect(painter.clip_rect()));
     let step = 14.0;
-    let col = Color32::from_white_alpha((10.0 * strength) as u8);
+    let col = theme::overlay((10.0 * strength) as u8);
     let mut x = r.left() - r.height();
     while x < r.right() {
         p.line_segment([pos2(x, r.bottom()), pos2(x + r.height(), r.top())], Stroke::new(1.0, col));
@@ -421,7 +422,7 @@ fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bound
             let x = stage.min.x + i as f64;
             let d = (x - mid_x).abs();
             let pos = v.to_screen(P::new(x, outer.max.y)) + front * 9.0;
-            painter.text(pos, Align2::CENTER_CENTER, fmt_mark(d), FontId::monospace(size), theme::TEXT_WEAK);
+            painter.text(pos, Align2::CENTER_CENTER, fmt_mark(d), FontId::monospace(size), theme::text_weak());
         }
         front_offset += 14.0;
     }
@@ -429,11 +430,11 @@ fn paint_edge_labels(painter: &Painter, c: &Choreography, v: &View, stage: Bound
         return;
     }
     let font = FontId::proportional(11.5);
-    let col = theme::TEXT_FAINT;
+    let col = theme::text_faint();
     let mid = outer.center();
     let audience = v.to_screen(P::new(mid.x, outer.max.y)) + front * front_offset;
     let back = v.to_screen(P::new(mid.x, outer.min.y)) - front * 12.0;
-    painter.text(audience, Align2::CENTER_CENTER, "AUDIENCE", font.clone(), theme::TEXT_WEAK);
+    painter.text(audience, Align2::CENTER_CENTER, "AUDIENCE", font.clone(), theme::text_weak());
     painter.text(back, Align2::CENTER_CENTER, "BACKSTAGE", font.clone(), col);
     // Side labels run along the edges, reading bottom-to-top on the left side
     // of the screen and top-to-bottom on the right.

@@ -120,13 +120,13 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         }
         if me.mail && a.email.trim() != me.email.as_deref().unwrap_or("") && !a.email.trim().is_empty() {
             ui.label(
-                RichText::new("We'll send a link to the new address to confirm it.").small().color(theme::TEXT_FAINT),
+                RichText::new("We'll send a link to the new address to confirm it.").small().color(theme::text_faint()),
             );
         }
         ui.label(
             RichText::new("A password you choose is stored encrypted: nobody, the admin included, can read it.")
                 .small()
-                .color(theme::TEXT_FAINT),
+                .color(theme::text_faint()),
         );
         ui.add_space(10.0);
         ui.separator();
@@ -168,7 +168,7 @@ fn delete_dialog(app: &mut App, ctx: &egui::Context) {
         ui.label(format!("This deletes the account {} for good. It can't be undone.", me.username));
         ui.add_space(6.0);
         if owned.is_empty() {
-            ui.label(RichText::new("You own no teams. Teams others own stay as they are.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("You own no teams. Teams others own stay as they are.").small().color(theme::text_weak()));
         } else {
             ui.label(RichText::new("These teams you own are deleted too, with all their choreographies and music, for everyone in them:").small());
             for t in &owned {
@@ -177,7 +177,7 @@ fn delete_dialog(app: &mut App, ctx: &egui::Context) {
             ui.label(
                 RichText::new("To keep choreographies, export them first (.arrus or PDF, in the library).")
                     .small()
-                    .color(theme::TEXT_WEAK),
+                    .color(theme::text_weak()),
             );
         }
         ui.add_space(8.0);

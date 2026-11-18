@@ -571,7 +571,7 @@ impl App {
                                 widgets::badge(ui, "PREMIUM", theme::accent());
                             }
                             if self.team.is_some() && !self.can_edit() {
-                                widgets::badge(ui, "GUEST", theme::TEXT_WEAK);
+                                widgets::badge(ui, "GUEST", theme::text_weak());
                             } else if self.team_read_only() {
                                 widgets::badge(ui, "READ-ONLY", theme::WARN)
                                     .on_hover_text("Premium has ended and this team was not kept: view, export and delete only");
@@ -608,7 +608,7 @@ impl App {
                         }
                     }
                     if teams.is_empty() {
-                        ui.label(RichText::new("No teams yet").color(theme::TEXT_WEAK));
+                        ui.label(RichText::new("No teams yet").color(theme::text_weak()));
                     }
                     if can_create {
                         ui.separator();
@@ -642,12 +642,12 @@ impl App {
                 (_, true) => "Premium account",
                 (_, false) => "Free account",
             };
-            ui.label(RichText::new(plan).small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new(plan).small().color(theme::text_weak()));
             if let Some(e) = &me.email {
-                ui.label(RichText::new(e).small().color(theme::TEXT_WEAK));
+                ui.label(RichText::new(e).small().color(theme::text_weak()));
             }
             if let (Some(t), Some(role)) = (self.team_name(), self.my_role()) {
-                ui.label(RichText::new(format!("{t}: {}", role.label())).small().color(theme::TEXT_WEAK));
+                ui.label(RichText::new(format!("{t}: {}", role.label())).small().color(theme::text_weak()));
             }
             if compact && let Some(s) = &self.storage {
                 ui.add_space(6.0);
@@ -697,7 +697,7 @@ impl App {
             }
             ui.separator();
             for (label, url) in [("Impressum", "/impressum"), ("Privacy policy", "/datenschutz"), ("Terms of use", "/nutzungsbedingungen")] {
-                if ui.add(egui::Button::new(RichText::new(label).small().color(theme::TEXT_WEAK)).frame(false)).clicked() {
+                if ui.add(egui::Button::new(RichText::new(label).small().color(theme::text_weak())).frame(false)).clicked() {
                     web::navigate(url);
                 }
             }
@@ -721,7 +721,7 @@ impl App {
                 r.request_focus();
             }
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.label(RichText::new("You are its owner: add people by nickname or with a share link.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("You are its owner: add people by nickname or with a share link.").small().color(theme::text_weak()));
         });
         let name = name.trim().to_owned();
         match c {
@@ -765,7 +765,7 @@ impl App {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("●").color(col));
-                                ui.label(RichText::new(&t.text).color(theme::TEXT));
+                                ui.label(RichText::new(&t.text).color(theme::text()));
                             });
                         })
                         .response
@@ -831,7 +831,7 @@ impl App {
 fn premium_tab(ui: &mut Ui, selected: bool) -> egui::Response {
     let fill = theme::accent();
     let text = RichText::new("★ Premium").strong().color(theme::on_color(fill));
-    let stroke = if selected { Stroke::new(2.0, theme::TEXT) } else { Stroke::NONE };
+    let stroke = if selected { Stroke::new(2.0, theme::text()) } else { Stroke::NONE };
     ui.add(egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(6))
         .on_hover_text("Free and Premium side by side")
 }
@@ -846,7 +846,7 @@ fn storage_meter(ui: &mut Ui, s: &Storage) {
     let text = format!("{} of {}", util::fmt_bytes(s.used), util::fmt_bytes(s.limit));
     let r = ui
         .horizontal(|ui| {
-            ui.label(RichText::new(&text).small().color(if col == theme::OK { theme::TEXT_WEAK } else { col }));
+            ui.label(RichText::new(&text).small().color(if col == theme::OK { theme::text_weak() } else { col }));
             widgets::meter(ui, vec2(90.0, 7.0), frac, col);
         })
         .response;

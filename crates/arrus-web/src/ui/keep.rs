@@ -111,7 +111,7 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
                     ui.label(
                         RichText::new("Choose the team and the choreographies you keep editing on the free plan.")
                             .small()
-                            .color(theme::TEXT_WEAK),
+                            .color(theme::text_weak()),
                     );
                 }
                 ui.add_space(6.0);
@@ -152,11 +152,11 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
                  delete it, but no longer change it.",
             )
             .small()
-            .color(theme::TEXT_WEAK),
+            .color(theme::text_weak()),
         );
         if !web::in_app() {
             ui.label(
-                RichText::new("With Premium again, everything becomes editable again.").small().color(theme::TEXT_WEAK),
+                RichText::new("With Premium again, everything becomes editable again.").small().color(theme::text_weak()),
             );
         }
         ui.label(RichText::new("You choose once: this can't be changed later.").small().color(theme::WARN));
@@ -180,7 +180,7 @@ pub fn dialog(app: &mut App, ctx: &egui::Context) {
         };
         let want = items.len().min(FREE_CHOREOGRAPHIES as usize);
         if items.is_empty() {
-            ui.label(RichText::new("This team has no choreographies.").color(theme::TEXT_WEAK));
+            ui.label(RichText::new("This team has no choreographies.").color(theme::text_weak()));
             return;
         }
         if items.len() <= FREE_CHOREOGRAPHIES as usize {

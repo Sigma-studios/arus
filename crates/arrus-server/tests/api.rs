@@ -1395,10 +1395,11 @@ async fn prefs_are_saved_per_person() {
     assert_eq!(t.me(&bob).await.prefs, UserPrefs::default());
 
     let prefs =
-        UserPrefs { background: Some([10, 20, 30]), accent: Some([200, 100, 50]), glide_secs: 9.0, long_move_warn: 3.0 };
+        UserPrefs { light: true, background: Some([10, 20, 30]), accent: Some([200, 100, 50]), glide_secs: 9.0, long_move_warn: 3.0 };
     let saved: UserPrefs = t.call(Method::PUT, "/api/me/prefs", Some(&bob), Some(prefs)).await.json();
     assert_eq!(saved.glide_secs, MAX_GLIDE_SECS, "clamped");
     assert_eq!(saved.long_move_warn, 1.0, "clamped");
+    assert!(saved.light, "theme kept");
     assert_eq!(t.me(&bob).await.prefs, saved);
     assert_eq!(t.me(&ann).await.prefs, UserPrefs::default(), "not shared");
 

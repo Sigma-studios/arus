@@ -24,7 +24,7 @@ pub fn fullscreen_button(ui: &mut Ui) {
             ui.label("1. Tap the Share button");
             ui.label("2. Choose “Add to Home Screen”");
             ui.label("3. Open Eightcount from the new icon");
-            ui.label(RichText::new("It then runs without the address bar. You log in once in the app.").small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new("It then runs without the address bar. You log in once in the app.").small().color(theme::text_weak()));
         });
     }
 }
@@ -38,7 +38,7 @@ pub fn presence(ui: &mut Ui, others: &[&arrus_api::Viewer], max: usize) {
     let extra = others.len().saturating_sub(max);
     if extra > 0 {
         let names: Vec<&str> = others[max..].iter().map(|v| v.username.as_str()).collect();
-        ui.label(RichText::new(format!("+{extra}")).color(theme::TEXT_WEAK)).on_hover_text(names.join(", "));
+        ui.label(RichText::new(format!("+{extra}")).color(theme::text_weak())).on_hover_text(names.join(", "));
     }
     ui.spacing_mut().item_spacing.x = 3.0;
     for v in others.iter().take(max).rev() {
@@ -73,7 +73,7 @@ pub fn danger_button(ui: &mut Ui, text: &str) -> Response {
 /// Small uppercase section title.
 pub fn section(ui: &mut Ui, title: &str) {
     ui.add_space(6.0);
-    ui.label(RichText::new(title.to_uppercase()).small().strong().color(theme::TEXT_FAINT));
+    ui.label(RichText::new(title.to_uppercase()).small().strong().color(theme::text_faint()));
     ui.add_space(2.0);
 }
 

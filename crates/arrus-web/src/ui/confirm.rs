@@ -79,7 +79,7 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
                     ui.label(
                         RichText::new("It lets you get back into your account if you forget your password.")
                             .small()
-                            .color(theme::TEXT_WEAK),
+                            .color(theme::text_weak()),
                     );
                 }
                 ui.add_space(6.0);
@@ -87,7 +87,7 @@ pub fn bar(app: &mut App, ui: &mut Ui) {
                 if ui.add_enabled(!app.confirm.sending, egui::Button::new(label)).clicked() {
                     send_now = true;
                 }
-                if ui.add(egui::Button::new(RichText::new("Later").color(theme::TEXT_WEAK)).frame(false)).clicked() {
+                if ui.add(egui::Button::new(RichText::new("Later").color(theme::text_weak())).frame(false)).clicked() {
                     app.confirm.dismissed = true;
                 }
             });

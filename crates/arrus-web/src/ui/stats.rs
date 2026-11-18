@@ -234,7 +234,7 @@ fn tiles(ui: &mut Ui, s: &SiteStats) {
         None => "No activity recorded yet: time, logins and edits are counted from now on.".to_owned(),
     };
     ui.add_space(4.0);
-    ui.label(RichText::new(since).small().color(theme::TEXT_FAINT));
+    ui.label(RichText::new(since).small().color(theme::text_faint()));
 }
 
 /// Figure tiles in rows of equal width: label, big value, small note.
@@ -263,10 +263,10 @@ fn tile(ui: &mut Ui, width: f32, label: &str, value: &str, sub: &str) {
         ui.vertical(|ui| {
             ui.set_width(inner);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.add(egui::Label::new(RichText::new(label.to_uppercase()).small().strong().color(theme::TEXT_FAINT)).truncate());
-            ui.add(egui::Label::new(RichText::new(value).size(24.0).strong().color(theme::TEXT)).truncate());
+            ui.add(egui::Label::new(RichText::new(label.to_uppercase()).small().strong().color(theme::text_faint())).truncate());
+            ui.add(egui::Label::new(RichText::new(value).size(24.0).strong().color(theme::text())).truncate());
             ui.add(
-                egui::Label::new(RichText::new(if sub.is_empty() { " " } else { sub }).small().color(theme::TEXT_WEAK))
+                egui::Label::new(RichText::new(if sub.is_empty() { " " } else { sub }).small().color(theme::text_weak()))
                     .truncate(),
             )
             .on_hover_text(sub);
@@ -393,7 +393,7 @@ fn chart(ui: &mut Ui, s: &Series<'_>, days: &[i64], height: f32) {
     for f in [0.0, 0.5, 1.0] {
         let y = plot.bottom() - plot.height() * f;
         p.line_segment([pos2(plot.left(), y), pos2(plot.right(), y)], Stroke::new(1.0, theme::border()));
-        p.text(pos2(plot.left() - 4.0, y), Align2::RIGHT_CENTER, (s.fmt)(top * f as f64), font.clone(), theme::TEXT_FAINT);
+        p.text(pos2(plot.left() - 4.0, y), Align2::RIGHT_CENTER, (s.fmt)(top * f as f64), font.clone(), theme::text_faint());
     }
     let n = values.len().max(1);
     let step = plot.width() / n as f32;
@@ -435,11 +435,11 @@ fn chart(ui: &mut Ui, s: &Series<'_>, days: &[i64], height: f32) {
             Align2::RIGHT_TOP => plot.right(),
             _ => x_of(i),
         };
-        p.text(pos2(x, plot.bottom() + 3.0), align, util::fmt_day(d), font.clone(), theme::TEXT_FAINT);
+        p.text(pos2(x, plot.bottom() + 3.0), align, util::fmt_day(d), font.clone(), theme::text_faint());
     }
     if let Some(i) = hovered {
         let x = x_of(i);
-        p.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.0, theme::TEXT_FAINT.gamma_multiply(0.5)));
+        p.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.0, theme::text_faint().gamma_multiply(0.5)));
         let when = if size == 1 {
             util::fmt_date(starts[i])
         } else {
@@ -451,7 +451,7 @@ fn chart(ui: &mut Ui, s: &Series<'_>, days: &[i64], height: f32) {
             _ => (s.fmt)(values[i]),
         };
         resp.on_hover_ui_at_pointer(|ui| {
-            ui.label(RichText::new(when).small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new(when).small().color(theme::text_weak()));
             ui.label(RichText::new(what).strong());
         });
     }
@@ -492,7 +492,7 @@ fn teams_card(ui: &mut Ui, s: &SiteStats) {
             ));
         }
         if s.teams.is_empty() {
-            ui.label(RichText::new("No teams yet.").color(theme::TEXT_WEAK));
+            ui.label(RichText::new("No teams yet.").color(theme::text_weak()));
         }
     });
 }
@@ -505,7 +505,7 @@ fn hbar(ui: &mut Ui, label: &str, v: f64, max: f64, value: String, color: Color3
     let label_w = (rect.width() * 0.3).min(120.0);
     let value_w = 70.0;
     let short: String = if label.chars().count() > 16 { label.chars().take(15).chain(['…']).collect() } else { label.to_owned() };
-    p.text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, short, font.clone(), theme::TEXT_WEAK);
+    p.text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, short, font.clone(), theme::text_weak());
     let track = egui::Rect::from_min_max(
         pos2(rect.left() + label_w, rect.center().y - 5.0),
         pos2(rect.right() - value_w, rect.center().y + 5.0),
@@ -515,7 +515,7 @@ fn hbar(ui: &mut Ui, label: &str, v: f64, max: f64, value: String, color: Color3
         let w = (track.width() * (v / max) as f32).max(2.0);
         p.rect_filled(egui::Rect::from_min_size(track.min, vec2(w, track.height())), egui::CornerRadius::same(3), color);
     }
-    p.text(pos2(rect.right(), rect.center().y), Align2::RIGHT_CENTER, value, font, theme::TEXT);
+    p.text(pos2(rect.right(), rect.center().y), Align2::RIGHT_CENTER, value, font, theme::text());
     ui.add_space(2.0);
     resp
 }
@@ -567,7 +567,7 @@ fn accounts_card(app: &mut App, ui: &mut Ui, site: &SiteStats) {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Sort by").color(theme::TEXT_WEAK));
+            ui.label(RichText::new("Sort by").color(theme::text_weak()));
             egui::ComboBox::from_id_salt("stats_sort").selected_text(st.sort.label()).width(180.0).show_ui(ui, |ui| {
                 for s in Sort::ALL {
                     if ui.add(egui::Button::selectable(st.sort == s, s.label())).clicked() {
@@ -583,7 +583,7 @@ fn accounts_card(app: &mut App, ui: &mut Ui, site: &SiteStats) {
         });
         ui.add_space(6.0);
         let list = sorted(&app.stats, site);
-        ui.label(RichText::new(format!("{} of {} accounts · click one for details", list.len(), site.accounts.len())).small().color(theme::TEXT_FAINT));
+        ui.label(RichText::new(format!("{} of {} accounts · click one for details", list.len(), site.accounts.len())).small().color(theme::text_faint()));
         ui.add_space(4.0);
         if compact {
             for a in &list {
@@ -595,7 +595,7 @@ fn accounts_card(app: &mut App, ui: &mut Ui, site: &SiteStats) {
             open = account_table(ui, &mut app.stats, &list, site.today);
         }
         if list.is_empty() {
-            ui.label(RichText::new("No account matches.").color(theme::TEXT_WEAK));
+            ui.label(RichText::new("No account matches.").color(theme::text_weak()));
         }
     });
     if let Some(id) = open {
@@ -641,7 +641,7 @@ fn account_table(ui: &mut Ui, st: &mut Stats, list: &[&AccountStats], today: i64
                 Some(s) => {
                     let on = st.sort == s;
                     let text = if on { format!("{name} {}", if st.desc { "↓" } else { "↑" }) } else { name.to_owned() };
-                    let r = ui.add(egui::Label::new(RichText::new(text).small().strong().color(if on { theme::TEXT } else { theme::TEXT_FAINT })).sense(Sense::click()));
+                    let r = ui.add(egui::Label::new(RichText::new(text).small().strong().color(if on { theme::text() } else { theme::text_faint() })).sense(Sense::click()));
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         if on {
                             st.desc = !st.desc;
@@ -652,7 +652,7 @@ fn account_table(ui: &mut Ui, st: &mut Stats, list: &[&AccountStats], today: i64
                     }
                 }
                 None => {
-                    ui.label(RichText::new(name).small().strong().color(theme::TEXT_FAINT));
+                    ui.label(RichText::new(name).small().strong().color(theme::text_faint()));
                 }
             }
         }
@@ -701,7 +701,7 @@ fn account_row_compact(ui: &mut Ui, a: &AccountStats, today: i64) -> egui::Respo
                     util::fmt_bytes(a.bytes)
                 ))
                 .small()
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
             );
         })
         .response
@@ -752,7 +752,7 @@ fn detail_window(app: &mut App, ctx: &egui::Context) {
 /// A section title in the account popup (larger than the screens' small caps).
 fn detail_heading(ui: &mut Ui, title: &str) {
     ui.add_space(10.0);
-    ui.label(RichText::new(title).size(17.0).strong().color(theme::TEXT));
+    ui.label(RichText::new(title).size(17.0).strong().color(theme::text()));
     ui.add_space(4.0);
 }
 
@@ -766,7 +766,7 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
             last_active(a, d.today)
         ))
         .size(15.0)
-        .color(theme::TEXT),
+        .color(theme::text()),
     );
     ui.add_space(10.0);
     let period = window_label(d.days);
@@ -795,7 +795,7 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
 
     detail_heading(ui, "Teams");
     if d.teams.is_empty() {
-        ui.label(RichText::new("In no team.").color(theme::TEXT_WEAK));
+        ui.label(RichText::new("In no team.").color(theme::text_weak()));
     }
     for t in &d.teams {
         let role = match t.role {
@@ -812,34 +812,34 @@ fn detail_body(ui: &mut Ui, d: &AccountDetailStats, compact: bool) {
                     t.team.choreographies,
                     util::fmt_bytes(t.team.bytes)
                 ))
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
             );
         });
     }
     ui.add_space(8.0);
     detail_heading(ui, "Choreographies in its teams");
     if d.choreographies.is_empty() {
-        ui.label(RichText::new("None.").color(theme::TEXT_WEAK));
+        ui.label(RichText::new("None.").color(theme::text_weak()));
         return;
     }
     egui::Grid::new("stats_detail_choreos").num_columns(if compact { 2 } else { 5 }).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
         for c in &d.choreographies {
             ui.vertical(|ui| {
                 ui.label(RichText::new(&c.name).strong());
-                ui.label(RichText::new(&c.team).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(&c.team).color(theme::text_weak()));
             });
             let shape = format!("{} formations · {} dancers{}", c.formation_count, c.dancer_count, if c.has_music { " · ♪" } else { "" });
             let changed = format!("changed {} by {}", util::fmt_date(util_day(c.updated_at)), c.updated_by);
             if compact {
                 ui.vertical(|ui| {
                     ui.label(format!("{shape} · {}", util::fmt_bytes(c.bytes)));
-                    ui.label(RichText::new(changed).color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(changed).color(theme::text_weak()));
                 });
             } else {
                 ui.label(shape);
                 ui.label(util::fmt_bytes(c.bytes));
-                ui.label(RichText::new(format!("created {}", util::fmt_date(util_day(c.created_at)))).color(theme::TEXT_WEAK));
-                ui.label(RichText::new(changed).color(theme::TEXT_WEAK));
+                ui.label(RichText::new(format!("created {}", util::fmt_date(util_day(c.created_at)))).color(theme::text_weak()));
+                ui.label(RichText::new(changed).color(theme::text_weak()));
             }
             ui.end_row();
         }

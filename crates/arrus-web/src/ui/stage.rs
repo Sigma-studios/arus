@@ -377,10 +377,10 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
             {
                 let text = format!("x {:.1} · y {:.1}", u.position.x, u.position.y);
                 let at = pp + vec2(16.0, 16.0);
-                let g = painter.layout_no_wrap(text, egui::FontId::monospace(12.0), theme::TEXT);
+                let g = painter.layout_no_wrap(text, egui::FontId::monospace(12.0), theme::ON_DARK);
                 let r = Rect::from_min_size(at, g.size()).expand(5.0);
                 painter.rect_filled(r, 4.0, Color32::from_black_alpha(200));
-                painter.galley(at, g, theme::TEXT);
+                painter.galley(at, g, theme::ON_DARK);
             }
         }
         _ => {}
@@ -414,7 +414,7 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
                     ed.view_moved = true;
                 }
                 if !ed.compact {
-                    ui.label(RichText::new(format!("{:.0} px/cell", v.scale)).small().color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(format!("{:.0} px/cell", v.scale)).small().color(theme::text_weak()));
                 }
                 if ui.small_button("+").clicked() {
                     v.zoom_at(rect.center(), 1.25);
@@ -452,7 +452,7 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
         });
         if let Some(s) = ed.sel.dancers() {
             ui.add_space(8.0);
-            ui.label(RichText::new(format!("{} selected", s.len())).small().color(theme::TEXT_WEAK));
+            ui.label(RichText::new(format!("{} selected", s.len())).small().color(theme::text_weak()));
         }
     }
 }

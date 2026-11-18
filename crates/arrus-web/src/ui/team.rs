@@ -225,7 +225,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.heading(&name);
             if let Some(r) = app.my_role() {
-                widgets::badge(ui, r.label(), if r == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() });
+                widgets::badge(ui, r.label(), if r == TeamRole::Guest { theme::text_weak() } else { theme::accent() });
             }
         });
         let who = match &owner {
@@ -236,7 +236,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
             Some(l) => format!(" · free plan: {l} choreographies"),
             None => " · unlimited choreographies".to_owned(),
         };
-        ui.label(RichText::new(format!("{who}{limit}")).small().color(theme::TEXT_WEAK));
+        ui.label(RichText::new(format!("{who}{limit}")).small().color(theme::text_weak()));
         if manage {
             ui.horizontal(|ui| {
                 if ui.button("Rename…").clicked() {
@@ -262,7 +262,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
                         role_change = Some((m.account_id, r));
                     }
                 } else {
-                    ui.label(RichText::new(m.role.label()).color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(m.role.label()).color(theme::text_weak()));
                 }
                 if m.role == TeamRole::Owner {
                     ui.label("");
@@ -281,7 +281,7 @@ pub fn card(app: &mut App, ui: &mut Ui) {
             }
         });
         if app.team_ui.members.is_empty() && app.team_ui.loaded_for == Some(team) {
-            ui.label(RichText::new("Nobody yet.").color(theme::TEXT_WEAK));
+            ui.label(RichText::new("Nobody yet.").color(theme::text_weak()));
         }
         if let Some((account, role)) = role_change {
             if let Some(m) = app.team_ui.members.iter_mut().find(|m| m.account_id == account) {
@@ -315,21 +315,21 @@ pub fn card(app: &mut App, ui: &mut Ui) {
         ui.label(
             RichText::new("They need an account first. Co-owners edit the choreographies with you; guests only view them.")
                 .small()
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
         );
 
         widgets::section(ui, "Share links");
         ui.label(
             RichText::new("Anyone with a link joins after logging in or signing up. Remove a link to stop it working.")
                 .small()
-                .color(theme::TEXT_WEAK),
+                .color(theme::text_weak()),
         );
         let mut revoke_token = None;
         let mut copied = false;
         for i in &app.team_ui.invites {
             let url = link(i);
             ui.horizontal(|ui| {
-                widgets::badge(ui, i.role.label(), if i.role == TeamRole::Guest { theme::TEXT_WEAK } else { theme::accent() });
+                widgets::badge(ui, i.role.label(), if i.role == TeamRole::Guest { theme::text_weak() } else { theme::accent() });
                 ui.label(RichText::new(&url).monospace().small());
                 if ui.small_button("Copy").clicked() {
                     ui.ctx().copy_text(url.clone());

@@ -109,7 +109,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         "Eightcount in its own window, with its own icon. You stay logged in, and the app always \
                          shows the latest version of Eightcount, so you only install it once.",
                     )
-                    .color(theme::TEXT_WEAK),
+                    .color(theme::text_weak()),
                 );
                 ui.add_space(12.0);
                 for p in order {
@@ -134,7 +134,7 @@ fn card(ui: &mut Ui, p: &Platform, this_device: bool) {
                             widgets::badge(ui, "THIS DEVICE", theme::accent());
                         }
                     });
-                    ui.label(RichText::new(p.blurb).small().color(theme::TEXT_WEAK));
+                    ui.label(RichText::new(p.blurb).small().color(theme::text_weak()));
                 });
             },
             |ui| match (p.file, APP_STORE) {
@@ -155,7 +155,7 @@ fn card(ui: &mut Ui, p: &Platform, this_device: bool) {
         );
         if !p.steps.is_empty() {
             ui.add_space(4.0);
-            egui::CollapsingHeader::new(RichText::new("How to install").color(theme::TEXT_WEAK))
+            egui::CollapsingHeader::new(RichText::new("How to install").color(theme::text_weak()))
                 .id_salt(("install", p.os))
                 .default_open(this_device)
                 .show(ui, |ui| {
@@ -167,7 +167,7 @@ fn card(ui: &mut Ui, p: &Platform, this_device: bool) {
                     }
                     if !p.note.is_empty() {
                         ui.add_space(4.0);
-                        ui.label(RichText::new(p.note).small().color(theme::TEXT_FAINT));
+                        ui.label(RichText::new(p.note).small().color(theme::text_faint()));
                     }
                 });
         }

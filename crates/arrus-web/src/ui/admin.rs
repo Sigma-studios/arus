@@ -131,7 +131,7 @@ fn teams_card(app: &mut App, ui: &mut Ui) {
                         util::fmt_bytes(t.bytes_used)
                     ))
                     .small()
-                    .color(theme::TEXT_WEAK),
+                    .color(theme::text_weak()),
                 );
                 ui.add_space(4.0);
                 if r.clicked() {
@@ -139,7 +139,7 @@ fn teams_card(app: &mut App, ui: &mut Ui) {
                 }
             }
             if app.teams.is_empty() {
-                ui.label(RichText::new("No teams yet.").color(theme::TEXT_WEAK));
+                ui.label(RichText::new("No teams yet.").color(theme::text_weak()));
             }
         });
         if let Some(id) = pick {
@@ -169,7 +169,7 @@ fn alerts_card(app: &mut App, ui: &mut Ui) {
                 "Posted to a Discord channel at 80 % and 95 % of {limit}, and when a save or upload is refused because storage is full."
             ))
             .small()
-            .color(theme::TEXT_WEAK),
+            .color(theme::text_weak()),
         );
         ui.add_space(8.0);
         let Some(settings) = app.admin.alerts.clone() else {
@@ -194,7 +194,7 @@ fn alerts_card(app: &mut App, ui: &mut Ui) {
         } else {
             ui.horizontal(|ui| {
                 widgets::badge(ui, "OFF", theme::WARN);
-                ui.label(RichText::new("No webhook: alerts only reach the server log.").small().color(theme::TEXT_WEAK));
+                ui.label(RichText::new("No webhook: alerts only reach the server log.").small().color(theme::text_weak()));
             });
         }
 
@@ -213,7 +213,7 @@ fn alerts_card(app: &mut App, ui: &mut Ui) {
         ui.label(
             RichText::new("In Discord: Edit channel → Integrations → Webhooks → New Webhook → Copy Webhook URL.")
                 .small()
-                .color(theme::TEXT_FAINT),
+                .color(theme::text_faint()),
         );
 
         ui.add_space(8.0);
@@ -234,7 +234,7 @@ fn alerts_card(app: &mut App, ui: &mut Ui) {
         ui.label(
             RichText::new("@here, @everyone, user:<id> or role:<id> (ids from Discord's developer mode). Empty: tag nobody.")
                 .small()
-                .color(theme::TEXT_FAINT),
+                .color(theme::text_faint()),
         );
     });
 }

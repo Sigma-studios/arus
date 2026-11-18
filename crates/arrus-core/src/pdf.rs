@@ -295,7 +295,8 @@ fn page(c: &Choreography, f: usize) -> Vec<u8> {
             }
         }
         let label = match fill_style {
-            DancerFillStyle::Indexed => Some((i + 1).to_string()),
+            // Numbers only when "Dancer numbers" is on.
+            DancerFillStyle::Indexed => set.is_dancer_indexes_shown.then(|| (i + 1).to_string()),
             DancerFillStyle::ShortNamed => u.short_name.clone().filter(|s| !s.trim().is_empty()),
             DancerFillStyle::Solid => None,
         };
