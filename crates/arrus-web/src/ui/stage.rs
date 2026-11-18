@@ -17,9 +17,10 @@ use crate::theme;
 #[derive(Debug, Clone)]
 pub enum Drag {
     Pan,
-    Box { origin: Pos2, base: BTreeSet<usize> },
+    /// `base`: what was selected before (kept with Shift).
+    Box { origin: Pos2, base: Selection },
     Dancers { anchor_start: P, pointer_start: P, starts: Vec<(usize, P)>, moved: bool },
-    Prop { idx: usize, start: P, pointer_start: P, moved: bool },
+    Props { anchor_start: P, pointer_start: P, starts: Vec<(usize, P)>, moved: bool },
     Resize { idx: usize, signs: (f64, f64), fixed: P, moved: bool },
     Rotate { idx: usize, moved: bool },
 }
@@ -111,7 +112,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let hit_at = |ed: &Editor, view: &View, sp: Pos2| -> Hit {
         let w = view.stage_at(sp);
         if editing
-            && let Selection::Prop(i) = ed.sel
+            && let Some(i) = ed.sel.single_prop()
             && let Some(p) = edit::props(&ed.doc, f).get(i)
         {
             let (corners, knob, _) = paint::prop_handles(p, view);
@@ -194,15 +195,25 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
                     Drag::Dancers { anchor_start, pointer_start: w, starts, moved: false }
                 }
                 Hit::Prop(idx) => {
-                    ed.sel = Selection::Prop(idx);
-                    let start = edit::props(&ed.doc, f).get(idx).map(|p| p.position).unwrap_or(w);
-                    Drag::Prop { idx, start, pointer_start: w, moved: false }
+                    if !ed.sel.has_prop(idx) {
+                        if shift {
+                            ed.sel.toggle_prop(idx);
+                        } else {
+                            ed.sel = Selection::one_prop(idx);
+                        }
+                    }
+                    let sel = ed.sel.props().cloned().unwrap_or_default();
+                    let all = edit::props(&ed.doc, f);
+                    let starts: Vec<(usize, P)> =
+                        all.iter().enumerate().filter(|(j, _)| sel.contains(j)).map(|(j, p)| (j, p.position)).collect();
+                    let anchor_start = all.get(idx).map(|p| p.position).unwrap_or(w);
+                    Drag::Props { anchor_start, pointer_start: w, starts, moved: false }
                 }
                 // On a touch screen one finger on empty space pans; selecting
                 // with a box needs the multi-select toggle.
                 Hit::None if touching && !ed.multi_select => Drag::Pan,
                 Hit::None => {
-                    let base = if shift { ed.sel.dancers().cloned().unwrap_or_default() } else { BTreeSet::new() };
+                    let base = if shift { ed.sel.clone() } else { Selection::None };
                     if !shift {
                         ed.sel = Selection::None;
                     }
@@ -229,9 +240,22 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
                     ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
                 }
                 Drag::Box { origin, base } => {
-                    let mut s = base.clone();
-                    s.extend(edit::box_select(&positions, view.stage_at(*origin), w));
-                    ed.sel = if s.is_empty() { Selection::None } else { Selection::Dancers(s) };
+                    // Dancers first; props when the box holds no dancer (or
+                    // props were selected already).
+                    let a = view.stage_at(*origin);
+                    let boxed = edit::box_select(&positions, a, w);
+                    let boxed_props = edit::box_select_props(&shown_props, a, w);
+                    let (mut s, props) = match base {
+                        Selection::Dancers(b) => (b.clone(), false),
+                        Selection::Props(b) => (b.clone(), true),
+                        Selection::None => (BTreeSet::new(), boxed.is_empty()),
+                    };
+                    s.extend(if props { boxed_props } else { boxed });
+                    ed.sel = match (s.is_empty(), props) {
+                        (true, _) => Selection::None,
+                        (false, true) => Selection::Props(s),
+                        (false, false) => Selection::Dancers(s),
+                    };
                 }
                 Drag::Dancers { anchor_start, pointer_start, starts, moved } => {
                     if !*moved {
@@ -242,18 +266,13 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
                     edit::drag_dancers(&mut ed.doc, f, starts, *anchor_start, delta, snap, bounds);
                     ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
                 }
-                Drag::Prop { idx, start, pointer_start, moved } => {
+                Drag::Props { anchor_start, pointer_start, starts, moved } => {
                     if !*moved {
                         ed.begin_gesture();
                         *moved = true;
                     }
-                    let mut to = geom::add(*start, geom::sub(w, *pointer_start));
-                    if let Some(s) = snap {
-                        to = geom::snap_pos(to, s);
-                    }
-                    if let Some(p) = edit::prop_mut(&mut ed.doc, f, *idx) {
-                        p.position = bounds.clamp(to);
-                    }
+                    let delta = geom::sub(w, *pointer_start);
+                    edit::drag_props(&mut ed.doc, f, starts, *anchor_start, delta, snap, bounds);
                     ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
                 }
                 Drag::Resize { idx, signs, fixed, moved } => {
@@ -306,7 +325,13 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
                     ed.sel = Selection::one(i);
                 }
             }
-            Hit::Prop(i) => ed.sel = Selection::Prop(i),
+            Hit::Prop(i) => {
+                if shift || ed.touch {
+                    ed.sel.toggle_prop(i);
+                } else {
+                    ed.sel = Selection::one_prop(i);
+                }
+            }
             Hit::Knob(_) | Hit::Corner(..) => {}
             Hit::None => {
                 if ed.touch || !shift {
@@ -448,8 +473,8 @@ fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
                         }
                     }
                     ui.separator();
-                    if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied prop")).clicked() {
-                        ed.paste_prop(None);
+                    if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied props")).clicked() {
+                        ed.paste_props(None);
                         ui.close();
                     }
                 });

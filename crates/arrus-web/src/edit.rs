@@ -9,13 +9,13 @@ use arrus_core::{Choreography, DEFAULT_COLOR, Formation, Prop, PropType, Unit};
 use crate::geom::{self, Bounds, P};
 
 /// What is selected on the stage. Dancers are indices (valid in every
-/// formation); a prop is an index into the current formation's props.
+/// formation); props are indices into the current formation's props.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Selection {
     #[default]
     None,
     Dancers(BTreeSet<usize>),
-    Prop(usize),
+    Props(BTreeSet<usize>),
 }
 
 impl Selection {
@@ -32,6 +32,52 @@ impl Selection {
 
     pub fn one(i: usize) -> Self {
         Selection::Dancers(BTreeSet::from([i]))
+    }
+
+    pub fn props(&self) -> Option<&BTreeSet<usize>> {
+        match self {
+            Selection::Props(s) if !s.is_empty() => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn has_prop(&self, i: usize) -> bool {
+        matches!(self, Selection::Props(s) if s.contains(&i))
+    }
+
+    pub fn one_prop(i: usize) -> Self {
+        Selection::Props(BTreeSet::from([i]))
+    }
+
+    /// The prop, when exactly one is selected (it gets the resize and rotate handles).
+    pub fn single_prop(&self) -> Option<usize> {
+        match self {
+            Selection::Props(s) if s.len() == 1 => s.first().copied(),
+            _ => None,
+        }
+    }
+
+    /// Shift-click on a prop: add or remove it.
+    pub fn toggle_prop(&mut self, i: usize) {
+        match self {
+            Selection::Props(s) => {
+                if !s.remove(&i) {
+                    s.insert(i);
+                }
+                if s.is_empty() {
+                    *self = Selection::None;
+                }
+            }
+            _ => *self = Selection::one_prop(i),
+        }
+    }
+
+    /// How many things are selected.
+    pub fn len(&self) -> usize {
+        match self {
+            Selection::Dancers(s) | Selection::Props(s) => s.len(),
+            Selection::None => 0,
+        }
     }
 
     /// Shift-click: add or remove one dancer.
@@ -58,8 +104,13 @@ impl Selection {
                     *self = Selection::None;
                 }
             }
-            Selection::Prop(i) if *i >= props => *self = Selection::None,
-            _ => {}
+            Selection::Props(s) => {
+                s.retain(|&i| i < props);
+                if s.is_empty() {
+                    *self = Selection::None;
+                }
+            }
+            Selection::None => {}
         }
     }
 }
@@ -86,6 +137,12 @@ pub fn hit_prop(props: &[Prop], p: P, tol: f64) -> Option<usize> {
 pub fn box_select(positions: &[(usize, P)], a: P, b: P) -> BTreeSet<usize> {
     let bx = Bounds::new(P::new(a.x.min(b.x), a.y.min(b.y)), P::new(a.x.max(b.x), a.y.max(b.y)));
     positions.iter().filter(|(_, q)| bx.contains(*q)).map(|(i, _)| *i).collect()
+}
+
+/// Props whose centre is inside the box spanned by `a` and `b`.
+pub fn box_select_props(props: &[Prop], a: P, b: P) -> BTreeSet<usize> {
+    let bx = Bounds::new(P::new(a.x.min(b.x), a.y.min(b.y)), P::new(a.x.max(b.x), a.y.max(b.y)));
+    props.iter().enumerate().filter(|(_, p)| bx.contains(p.position)).map(|(i, _)| i).collect()
 }
 
 /// Positions of every dancer in formation `f`.
@@ -246,6 +303,7 @@ pub fn new_choreography(name: &str, id: &str, now: i64, dancers: usize) -> Chore
 /// Insert a new formation after `index` with the same positions and props,
 /// default timing, no name or comments. Returns the new index.
 pub fn add_formation_after(c: &mut Choreography, index: usize) -> usize {
+    stamp_prop_numbers(c);
     let src = c.formations.get(index).cloned().unwrap_or_default();
     let mut f = Formation::new();
     f.units = src.units;
@@ -258,6 +316,7 @@ pub fn add_formation_after(c: &mut Choreography, index: usize) -> usize {
 
 /// Insert an exact copy of formation `index` right after it.
 pub fn duplicate_formation(c: &mut Choreography, index: usize) -> Option<usize> {
+    stamp_prop_numbers(c);
     let f = c.formations.get(index)?.clone();
     c.formations.insert(index + 1, f);
     Some(index + 1)
@@ -299,13 +358,81 @@ pub fn new_prop(c: &Choreography, kind: PropType) -> Prop {
         rotation_angle: 0.0,
         color: 0xFF8D99AE,
         alpha: 1.0,
+        number: None,
         extra: Default::default(),
+    }
+}
+
+/// The number shown on a prop (the same in every formation it is in).
+pub fn prop_number(p: &Prop, index: usize) -> u32 {
+    p.number.unwrap_or(index as u32 + 1)
+}
+
+/// Store every prop's number, so removing or adding props cannot renumber
+/// the others. Props without one get their place in the list (as before
+/// numbers existed, when transitions paired props by place).
+pub fn stamp_prop_numbers(c: &mut Choreography) {
+    for f in &mut c.formations {
+        for (i, p) in f.props.iter_mut().flatten().enumerate() {
+            p.number.get_or_insert(i as u32 + 1);
+        }
+    }
+}
+
+/// The lowest number no prop uses in any formation.
+fn next_prop_number(c: &Choreography) -> u32 {
+    c.formations
+        .iter()
+        .flat_map(|f| f.props.iter().flatten().enumerate().map(|(i, p)| prop_number(p, i)))
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// Index of prop number `n` in formation `f`.
+pub fn find_prop(c: &Choreography, f: usize, n: u32) -> Option<usize> {
+    props(c, f).iter().enumerate().position(|(i, p)| prop_number(p, i) == n)
+}
+
+/// The run of formations around `f` that have prop number `n` (inclusive).
+pub fn prop_span(c: &Choreography, f: usize, n: u32) -> (usize, usize) {
+    let has = |i: usize| find_prop(c, i, n).is_some();
+    let (mut a, mut b) = (f, f);
+    while a > 0 && has(a - 1) {
+        a -= 1;
+    }
+    while b + 1 < c.formations.len() && has(b + 1) {
+        b += 1;
+    }
+    (a, b)
+}
+
+/// Show prop `i` of formation `f` exactly in formations `from..=to`: copied
+/// (as it is in `f`) into those that lack it, removed from all others.
+/// Formations that already have it keep their own version of it.
+pub fn set_prop_span(c: &mut Choreography, f: usize, i: usize, from: usize, to: usize) {
+    stamp_prop_numbers(c);
+    let Some(p) = props(c, f).get(i).cloned() else { return };
+    let n = prop_number(&p, i);
+    let (from, to) = (from.min(to), from.max(to));
+    for (k, fm) in c.formations.iter_mut().enumerate() {
+        let list = fm.props.get_or_insert_with(Vec::new);
+        let at = list.iter().position(|q| q.number == Some(n));
+        match (from <= k && k <= to, at) {
+            (true, None) => list.push(p.clone()),
+            (false, Some(j)) => {
+                list.remove(j);
+            }
+            _ => {}
+        }
     }
 }
 
 /// Add a prop to formation `f`; returns its index.
 pub fn add_prop(c: &mut Choreography, f: usize, kind: PropType) -> Option<usize> {
-    let p = new_prop(c, kind);
+    stamp_prop_numbers(c);
+    let mut p = new_prop(c, kind);
+    p.number = Some(next_prop_number(c));
     let props = c.formations.get_mut(f)?.props.get_or_insert_with(Vec::new);
     props.push(p);
     Some(props.len() - 1)
@@ -315,31 +442,89 @@ pub fn add_prop(c: &mut Choreography, f: usize, kind: PropType) -> Option<usize>
 /// another tab or choreography).
 const PROP_CLIP_PREFIX: &str = "eightcount-prop:";
 
-/// A prop as clipboard text.
-pub fn prop_to_clipboard(p: &Prop) -> String {
-    format!("{PROP_CLIP_PREFIX}{}", serde_json::to_string(p).unwrap_or_default())
+/// Props as clipboard text.
+pub fn props_to_clipboard(ps: &[Prop]) -> String {
+    format!("{PROP_CLIP_PREFIX}{}", serde_json::to_string(ps).unwrap_or_default())
 }
 
-/// A prop from clipboard text, if that is what was copied.
-pub fn prop_from_clipboard(s: &str) -> Option<Prop> {
-    serde_json::from_str(s.trim().strip_prefix(PROP_CLIP_PREFIX)?).ok()
+/// Props from clipboard text, if that is what was copied (a list, or one
+/// prop as copied by an earlier version).
+pub fn props_from_clipboard(s: &str) -> Option<Vec<Prop>> {
+    let json = s.trim().strip_prefix(PROP_CLIP_PREFIX)?;
+    let ps = serde_json::from_str::<Vec<Prop>>(json).ok().or_else(|| serde_json::from_str::<Prop>(json).ok().map(|p| vec![p]))?;
+    (!ps.is_empty()).then_some(ps)
 }
 
-/// Paste a copy of `p` into formation `f`, at the same spot (moved a
-/// little if the very same prop is already there, e.g. pasted twice).
-/// Returns its index.
-pub fn paste_prop(c: &mut Choreography, f: usize, mut p: Prop) -> Option<usize> {
+/// Paste copies of `ps` into formation `f`, at the same spots. If one of
+/// them would land exactly on the very same prop (pasted twice), the whole
+/// group moves a little. Returns their indices.
+pub fn paste_props(c: &mut Choreography, f: usize, mut ps: Vec<Prop>) -> BTreeSet<usize> {
+    stamp_prop_numbers(c);
+    // A pasted prop stays the same prop (same number) unless the formation
+    // already has that number: then it is a new prop.
+    let mut taken: BTreeSet<u32> = props(c, f).iter().enumerate().map(|(i, p)| prop_number(p, i)).collect();
+    let mut next = next_prop_number(c);
+    for p in &mut ps {
+        match p.number {
+            Some(n) if !taken.contains(&n) => {
+                taken.insert(n);
+            }
+            _ => {
+                p.number = Some(next);
+                taken.insert(next);
+                next += 1;
+            }
+        }
+    }
     let bounds = geom::drawable_bounds(c);
-    while props(c, f).iter().any(|q| q.position == p.position && q.prop_type == p.prop_type) {
-        let next = bounds.clamp(geom::add(p.position, P::new(0.5, 0.5)));
-        if next == p.position {
+    let clash = |c: &Choreography, ps: &[Prop]| {
+        ps.iter().any(|p| props(c, f).iter().any(|q| q.position == p.position && q.prop_type == p.prop_type))
+    };
+    for _ in 0..40 {
+        if !clash(c, &ps) {
             break;
         }
-        p.position = next;
+        for p in &mut ps {
+            p.position = bounds.clamp(geom::add(p.position, P::new(0.5, 0.5)));
+        }
     }
-    let props = c.formations.get_mut(f)?.props.get_or_insert_with(Vec::new);
-    props.push(p);
-    Some(props.len() - 1)
+    let Some(props) = c.formations.get_mut(f).map(|f| f.props.get_or_insert_with(Vec::new)) else {
+        return BTreeSet::new();
+    };
+    let first = props.len();
+    props.extend(ps);
+    (first..props.len()).collect()
+}
+
+/// Remove several props of formation `f`.
+pub fn remove_props(c: &mut Choreography, f: usize, which: &BTreeSet<usize>) {
+    for &i in which.iter().rev() {
+        remove_prop(c, f, i);
+    }
+}
+
+/// Move props of formation `f` together: the `anchor_start` point follows
+/// the pointer by `delta` (snapped), the others keep their offsets; each
+/// stays inside `bounds`. `starts` are positions at the start of the drag.
+pub fn drag_props(
+    c: &mut Choreography,
+    f: usize,
+    starts: &[(usize, P)],
+    anchor_start: P,
+    delta: P,
+    snap: Option<f64>,
+    bounds: Bounds,
+) {
+    let mut to = geom::add(anchor_start, delta);
+    if let Some(s) = snap {
+        to = geom::snap_pos(to, s);
+    }
+    let d = geom::sub(to, anchor_start);
+    for &(i, start) in starts {
+        if let Some(p) = prop_mut(c, f, i) {
+            p.position = bounds.clamp(geom::add(start, d));
+        }
+    }
 }
 
 pub fn props(c: &Choreography, f: usize) -> &[Prop] {
@@ -351,6 +536,7 @@ pub fn prop_mut(c: &mut Choreography, f: usize, i: usize) -> Option<&mut Prop> {
 }
 
 pub fn remove_prop(c: &mut Choreography, f: usize, i: usize) -> bool {
+    stamp_prop_numbers(c);
     match c.formations.get_mut(f).and_then(|f| f.props.as_mut()) {
         Some(p) if i < p.len() => {
             p.remove(i);
@@ -396,7 +582,8 @@ pub fn props_in(c: &Choreography, phase: Option<Phase>) -> Vec<Prop> {
             props(c, to)
                 .iter()
                 .enumerate()
-                .map(|(i, pb)| match a.get(i) {
+                // The same prop is the one with the same number.
+                .map(|(i, pb)| match a.iter().enumerate().find(|(j, pa)| prop_number(pa, *j) == prop_number(pb, i)).map(|(_, pa)| pa) {
                     Some(pa) if pa.prop_type == pb.prop_type => {
                         let mut p = pb.clone();
                         let k = progress;
@@ -465,8 +652,17 @@ mod tests {
         let mut s = Selection::Dancers(BTreeSet::from([1, 5]));
         s.sanitize(3, 0);
         assert_eq!(s, Selection::one(1));
-        let mut s = Selection::Prop(2);
+        let mut s = Selection::one_prop(2);
         s.sanitize(3, 2);
+        assert_eq!(s, Selection::None);
+        let mut s = Selection::one(1);
+        s.toggle_prop(0);
+        s.toggle_prop(3);
+        assert_eq!(s, Selection::Props(BTreeSet::from([0, 3])));
+        assert_eq!(s.single_prop(), None);
+        s.toggle_prop(0);
+        assert_eq!(s.single_prop(), Some(3));
+        s.sanitize(5, 3);
         assert_eq!(s, Selection::None);
     }
 
@@ -639,18 +835,75 @@ mod tests {
         let i = add_prop(&mut c, 0, PropType::ALL[0]).unwrap();
         let mut p = props(&c, 0)[i].clone();
         p.color = 0xFF112233;
-        let text = prop_to_clipboard(&p);
-        let back = prop_from_clipboard(&text).unwrap();
-        assert_eq!(back, p);
-        assert_eq!(prop_from_clipboard("#FF0000"), None);
+        let mut q = p.clone();
+        q.position = geom::add(q.position, P::new(2.0, 0.0));
+        let text = props_to_clipboard(&[p.clone(), q.clone()]);
+        let back = props_from_clipboard(&text).unwrap();
+        assert_eq!(back, vec![p.clone(), q.clone()]);
+        assert_eq!(props_from_clipboard("#FF0000"), None);
+        // One prop, as copied before several could be.
+        let one = format!("eightcount-prop:{}", serde_json::to_string(&p).unwrap());
+        assert_eq!(props_from_clipboard(&one), Some(vec![p.clone()]));
 
         let n = props(&c, 1).len();
-        let j = paste_prop(&mut c, 1, back.clone()).unwrap();
-        assert_eq!(props(&c, 1).len(), n + 1);
-        assert_eq!(props(&c, 1)[j].position, p.position, "same spot in another formation");
-        // Pasted again into the same formation: moved off the first copy.
-        let k = paste_prop(&mut c, 1, back).unwrap();
-        assert_ne!(props(&c, 1)[k].position, p.position);
+        let got = paste_props(&mut c, 1, back.clone());
+        assert_eq!(got, BTreeSet::from([n, n + 1]));
+        assert_eq!(props(&c, 1)[n].position, p.position, "same spot in another formation");
+        // Pasted again into the same formation: the group moves off the first copies, keeping its shape.
+        let again: Vec<usize> = paste_props(&mut c, 1, back).into_iter().collect();
+        let (a, b) = (props(&c, 1)[again[0]].position, props(&c, 1)[again[1]].position);
+        assert_ne!(a, p.position);
+        assert_eq!(geom::sub(b, a), geom::sub(q.position, p.position));
+
+        let mut c2 = c.clone();
+        remove_props(&mut c2, 1, &again.iter().copied().collect());
+        assert_eq!(props(&c2, 1).len(), n + 2);
+    }
+
+    #[test]
+    fn props_keep_their_numbers() {
+        let mut c = new_choreography("t", "id", 0, 1);
+        add_formation_after(&mut c, 0);
+        add_formation_after(&mut c, 1);
+        let a = add_prop(&mut c, 0, PropType::ALL[0]).unwrap();
+        let b = add_prop(&mut c, 0, PropType::ALL[0]).unwrap();
+        assert_eq!((prop_number(&props(&c, 0)[a], a), prop_number(&props(&c, 0)[b], b)), (1, 2));
+        // Removing the first does not renumber the second.
+        remove_prop(&mut c, 0, a);
+        assert_eq!(prop_number(&props(&c, 0)[0], 0), 2);
+        // A new prop gets a number no prop uses.
+        let n = add_prop(&mut c, 1, PropType::ALL[0]).unwrap();
+        assert_eq!(prop_number(&props(&c, 1)[n], n), 3);
+
+        // Shown in formations 1 to 3 (0-based 0..=2): copied into 1 and 2.
+        set_prop_span(&mut c, 0, 0, 0, 2);
+        assert!((0..3).all(|f| find_prop(&c, f, 2).is_some()));
+        assert_eq!(prop_span(&c, 1, 2), (0, 2));
+        // Only the last two: removed from the first.
+        let at = find_prop(&c, 1, 2).unwrap();
+        set_prop_span(&mut c, 1, at, 1, 2);
+        assert_eq!(find_prop(&c, 0, 2), None);
+        assert_eq!(prop_span(&c, 2, 2), (1, 2));
+
+        // Pasting into a formation that already has that number makes a new prop.
+        let p = props(&c, 1)[find_prop(&c, 1, 2).unwrap()].clone();
+        let got = paste_props(&mut c, 0, vec![p.clone()]);
+        assert_eq!(props(&c, 0)[*got.first().unwrap()].number, Some(2), "same prop in another formation");
+        let got = paste_props(&mut c, 1, vec![p]);
+        assert_eq!(props(&c, 1)[*got.first().unwrap()].number, Some(4));
+    }
+
+    #[test]
+    fn legacy_props_are_numbered_by_place() {
+        let mut c = new_choreography("t", "id", 0, 1);
+        let mut p = new_prop(&c, PropType::ALL[0]);
+        c.formations[0].props = Some(vec![p.clone(), p.clone()]);
+        assert_eq!(prop_number(&c.formations[0].props.as_ref().unwrap()[1], 1), 2);
+        stamp_prop_numbers(&mut c);
+        assert_eq!(c.formations[0].props.as_ref().unwrap()[1].number, Some(2));
+        // Unset numbers are not written to the file.
+        p.number = None;
+        assert!(!serde_json::to_string(&p).unwrap().contains("number"));
     }
 }
 

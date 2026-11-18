@@ -37,7 +37,8 @@ fn body(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         match ed.sel.clone() {
             Selection::Dancers(s) if s.len() == 1 => dancer(ed, ui, *s.first().unwrap_or(&0)),
             Selection::Dancers(s) if !s.is_empty() => dancers(ed, ui, &s),
-            Selection::Prop(i) => prop(ed, ui, i),
+            Selection::Props(s) if s.len() == 1 => prop(ed, ui, *s.first().unwrap_or(&0)),
+            Selection::Props(s) if !s.is_empty() => props_multi(ed, ui, &s),
             _ => settings(ed, app, ui),
         }
     });
@@ -230,7 +231,8 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
     let f = ed.cur();
     let Some(p) = edit::props(&ed.doc, f).get(i).cloned() else { return };
     let can = ed.can_edit;
-    header(ui, &format!("Prop · {}", geom::prop_label(p.kind())), &format!("In formation {}", f + 1));
+    let number = edit::prop_number(&p, i);
+    header(ui, &format!("Prop {number} · {}", geom::prop_label(p.kind())), &format!("In formation {}", f + 1));
     let key = |k: &str| format!("prop{f}-{i}-{k}");
     let mut np = p.clone();
     let mut changed: Option<String> = None;
@@ -308,6 +310,31 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
             }
         });
     }
+
+    // Which formations the prop is in.
+    let count = ed.doc.formations.len();
+    if count > 1 {
+        widgets::section(ui, "Formations");
+        let (a, b) = edit::prop_span(&ed.doc, f, number);
+        let (mut from, mut to) = (a + 1, b + 1);
+        let mut moved = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Shown from");
+            moved |= ui.add_enabled(can, egui::DragValue::new(&mut from).range(1..=f + 1).speed(0.1)).changed();
+            ui.label("to");
+            moved |= ui.add_enabled(can, egui::DragValue::new(&mut to).range(f + 1..=count).speed(0.1)).changed();
+        });
+        if moved {
+            ed.edit(Some(&format!("pspan{number}")), |d| edit::set_prop_span(d, f, i, from - 1, to - 1));
+        }
+        let elsewhere = (0..count).filter(|&k| (k < a || k > b) && edit::find_prop(&ed.doc, k, number).is_some()).count();
+        let note = if elsewhere > 0 {
+            format!("Formations {from} to {to}. It is also in {elsewhere} other formation(s); changing the range removes it there.")
+        } else {
+            format!("Formations {from} to {to}. Added formations get a copy of it as it is here; it is removed from the others.")
+        };
+        ui.label(RichText::new(note).small().color(theme::text_faint()));
+    }
     if can {
         ui.label(
             RichText::new("Drag to move, drag the corners to resize, the round knob to rotate (snaps to 15°; hold Shift for free rotation).")
@@ -318,16 +345,86 @@ fn prop(ed: &mut Editor, ui: &mut Ui, i: usize) {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .button("Copy prop")
-                .on_hover_text("Then open another formation and paste it: Ctrl/Cmd+V, or + Prop → Paste copied prop")
+                .on_hover_text("Then open another formation and paste it: Ctrl/Cmd+V, or + Prop → Paste copied props")
                 .clicked()
             {
-                ed.copy_prop(ui.ctx());
+                ed.copy_props(ui.ctx());
             }
             if widgets::danger_button(ui, "Delete prop").clicked() {
                 ed.delete_selection();
             }
         });
     }
+}
+
+/// Several props of the current formation: what they share.
+fn props_multi(ed: &mut Editor, ui: &mut Ui, set: &BTreeSet<usize>) {
+    let f = ed.cur();
+    let can = ed.can_edit;
+    header(ui, &format!("{} props", set.len()), &format!("In formation {}. Changes apply to all of them.", f + 1));
+    let props: Vec<(usize, arrus_core::Prop)> =
+        edit::props(&ed.doc, f).iter().enumerate().filter(|(i, _)| set.contains(i)).map(|(i, p)| (i, p.clone())).collect();
+    for (i, p) in &props {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+            ui.painter().rect_filled(r, 3.0, to_c32(p.color));
+            ui.label(format!("Prop {}  {}", edit::prop_number(p, *i), geom::prop_label(p.kind())));
+        });
+    }
+    if !can {
+        return;
+    }
+    let Some((_, first)) = props.first().cloned() else { return };
+    let mut color = None;
+    let mut alpha = None;
+    egui::Grid::new("props_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+        ui.label("Colour");
+        let mut c = to_c32(first.color);
+        if widgets::color_edit(ui, "props", &mut c) {
+            color = Some(from_c32(c));
+        }
+        ui.end_row();
+        ui.label("Opacity");
+        let mut a = first.alpha;
+        if ui.add(egui::Slider::new(&mut a, 0.0..=1.0).fixed_decimals(2)).changed() {
+            alpha = Some(a);
+        }
+        ui.end_row();
+    });
+    if color.is_some() || alpha.is_some() {
+        let key = if color.is_some() { "mpcolor" } else { "mpalpha" };
+        let set = set.clone();
+        ed.edit(Some(key), |d| {
+            for &i in &set {
+                if let Some(p) = edit::prop_mut(d, f, i) {
+                    if let Some(c) = color {
+                        p.color = c;
+                    }
+                    if let Some(a) = alpha {
+                        p.alpha = a;
+                    }
+                }
+            }
+        });
+    }
+    ui.label(
+        RichText::new("Drag one to move them all; Shift/Ctrl+click adds or removes a prop.")
+            .small()
+            .color(theme::text_faint()),
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button("Copy props")
+            .on_hover_text("Then open another formation and paste them: Ctrl/Cmd+V, or + Prop → Paste copied props")
+            .clicked()
+        {
+            ed.copy_props(ui.ctx());
+        }
+        if widgets::danger_button(ui, "Delete props").clicked() {
+            ed.delete_selection();
+        }
+    });
 }
 
 fn size_value(v: &mut f64) -> egui::DragValue<'_> {

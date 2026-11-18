@@ -266,6 +266,7 @@ mod tests {
             rotation_angle: angle,
             color: 0,
             alpha: 1.0,
+            number: None,
             extra: Default::default(),
         }
     }

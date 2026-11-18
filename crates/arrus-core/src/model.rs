@@ -318,6 +318,11 @@ pub struct Prop {
     /// Opacity, 0 to 1.
     #[serde(default = "one")]
     pub alpha: f64,
+    /// Eightcount's number for the prop: the same prop has the same number
+    /// in every formation it is in. Not in the app's files; `None`: its
+    /// place in the formation's list, counted from 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u32>,
     #[serde(flatten)]
     pub extra: Extra,
 }

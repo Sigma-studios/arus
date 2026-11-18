@@ -123,7 +123,7 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
     for (i, p) in s.props.iter().enumerate() {
         let pts: Vec<Pos2> = geom::prop_outline(p).into_iter().map(|q| v.to_screen(q)).collect();
         let fill = theme::argb(p.color, p.alpha as f32);
-        let selected = matches!(s.selection, Selection::Prop(j) if *j == i);
+        let selected = s.selection.has_prop(i);
         let stroke = if selected {
             Stroke::new(2.0, theme::SELECT)
         } else if s.hover_prop == Some(i) {
@@ -132,7 +132,20 @@ pub fn paint_stage(painter: &Painter, s: &Scene<'_>) {
             Stroke::new(1.0, theme::argb(p.color, 1.0).gamma_multiply(0.6))
         };
         painter.add(Shape::convex_polygon(pts, fill, stroke));
-        if selected && s.handles && !s.playing {
+        // Its number, so the same prop can be told apart in every formation.
+        let side = (p.width.min(p.length) * v.scale as f64) as f32;
+        if side >= 12.0 {
+            let size = (side * 0.45).clamp(9.0, 18.0);
+            let text = theme::on_color(theme::argb(p.color, 1.0)).gamma_multiply((p.alpha as f32).clamp(0.35, 1.0));
+            painter.text(
+                v.to_screen(p.position),
+                Align2::CENTER_CENTER,
+                crate::edit::prop_number(p, i).to_string(),
+                FontId::proportional(size),
+                text,
+            );
+        }
+        if selected && s.selection.single_prop() == Some(i) && s.handles && !s.playing {
             let (corners, knob, front) = prop_handles(p, v);
             painter.line_segment([front, knob], Stroke::new(1.5, theme::SELECT));
             painter.circle(knob, HANDLE_HALF + 1.5, theme::bg(), Stroke::new(2.0, theme::SELECT));

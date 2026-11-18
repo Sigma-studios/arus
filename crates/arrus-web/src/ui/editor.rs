@@ -17,8 +17,8 @@ use crate::edit::{self, Selection};
 use crate::geom::{self, P};
 
 thread_local! {
-    /// The last copied prop; kept across choreographies.
-    static PROP_CLIPBOARD: RefCell<Option<arrus_core::Prop>> = const { RefCell::new(None) };
+    /// The last copied props; kept across choreographies.
+    static PROP_CLIPBOARD: RefCell<Vec<arrus_core::Prop>> = const { RefCell::new(Vec::new()) };
 }
 use crate::undo::{UNDO_LIMIT, UndoStack};
 use crate::view::View;
@@ -396,11 +396,9 @@ impl Editor {
     pub fn delete_selection(&mut self) {
         match self.sel.clone() {
             Selection::Dancers(s) if !s.is_empty() => self.modal = Some(EdModal::RemoveDancers(s)),
-            Selection::Prop(i) => {
+            Selection::Props(s) => {
                 let f = self.cur();
-                self.edit(None, |d| {
-                    edit::remove_prop(d, f, i);
-                });
+                self.edit(None, |d| edit::remove_props(d, f, &s));
                 self.sel = Selection::None;
             }
             _ => {}
@@ -414,35 +412,46 @@ impl Editor {
         self.sel = Selection::one(idx);
     }
 
-    /// Copy the selected prop (kept for "Paste prop" and put on the system
-    /// clipboard, so Cmd/Ctrl+V works in other tabs too).
-    pub fn copy_prop(&mut self, ctx: &egui::Context) -> bool {
-        let Selection::Prop(i) = self.sel else { return false };
-        let Some(p) = edit::props(&self.doc, self.cur()).get(i).cloned() else { return false };
-        ctx.copy_text(edit::prop_to_clipboard(&p));
-        PROP_CLIPBOARD.with(|c| *c.borrow_mut() = Some(p));
-        true
+    /// Copy the selected props (kept for "Paste" and put on the system
+    /// clipboard, so Cmd/Ctrl+V works in other tabs too). Returns how many.
+    pub fn copy_props(&mut self, ctx: &egui::Context) -> usize {
+        let Some(sel) = self.sel.props() else { return 0 };
+        let ps: Vec<arrus_core::Prop> = edit::props(&self.doc, self.cur())
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sel.contains(i))
+            .map(|(_, p)| p.clone())
+            .collect();
+        if ps.is_empty() {
+            return 0;
+        }
+        ctx.copy_text(edit::props_to_clipboard(&ps));
+        let n = ps.len();
+        PROP_CLIPBOARD.with(|c| *c.borrow_mut() = ps);
+        n
     }
 
-    /// Whether a copied prop is ready to paste.
+    /// Whether copied props are ready to paste.
     pub fn has_copied_prop() -> bool {
-        PROP_CLIPBOARD.with(|c| c.borrow().is_some())
+        PROP_CLIPBOARD.with(|c| !c.borrow().is_empty())
     }
 
-    /// Paste `p` (else the last copied prop) into the current formation and select it.
-    pub fn paste_prop(&mut self, p: Option<arrus_core::Prop>) -> bool {
-        let Some(p) = p.or_else(|| PROP_CLIPBOARD.with(|c| c.borrow().clone())) else { return false };
-        if !self.can_edit {
-            return false;
+    /// Paste `ps` (else the last copied props) into the current formation
+    /// and select them. Returns how many.
+    pub fn paste_props(&mut self, ps: Option<Vec<arrus_core::Prop>>) -> usize {
+        let ps = ps.unwrap_or_else(|| PROP_CLIPBOARD.with(|c| c.borrow().clone()));
+        if ps.is_empty() || !self.can_edit {
+            return 0;
         }
         self.pause();
         let f = self.cur();
-        let mut idx = None;
-        self.edit(None, |d| idx = edit::paste_prop(d, f, p.clone()));
-        if let Some(i) = idx {
-            self.sel = Selection::Prop(i);
+        let mut got = BTreeSet::new();
+        self.edit(None, |d| got = edit::paste_props(d, f, ps.clone()));
+        let n = got.len();
+        if n > 0 {
+            self.sel = Selection::Props(got);
         }
-        idx.is_some()
+        n
     }
 
     pub fn add_prop(&mut self, kind: arrus_core::PropType) {
@@ -450,7 +459,7 @@ impl Editor {
         let mut idx = None;
         self.edit(None, |d| idx = edit::add_prop(d, f, kind));
         if let Some(i) = idx {
-            self.sel = Selection::Prop(i);
+            self.sel = Selection::one_prop(i);
         }
     }
 
@@ -466,9 +475,11 @@ impl Editor {
             Selection::Dancers(set) if !set.is_empty() => {
                 self.edit(Some("nudge"), |doc| edit::nudge_dancers(doc, f, &set, d, bounds));
             }
-            Selection::Prop(i) => self.edit(Some("nudge"), |doc| {
-                if let Some(p) = edit::prop_mut(doc, f, i) {
-                    p.position = bounds.clamp(geom::add(p.position, d));
+            Selection::Props(set) => self.edit(Some("nudge"), |doc| {
+                for &i in &set {
+                    if let Some(p) = edit::prop_mut(doc, f, i) {
+                        p.position = bounds.clamp(geom::add(p.position, d));
+                    }
                 }
             }),
             _ => {}
@@ -838,15 +849,22 @@ fn keyboard(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
         });
         (copy, paste)
     });
-    if copy && ed.copy_prop(&ctx) {
-        app.toast("Prop copied: go to another formation and paste it (Ctrl/Cmd+V)");
+    if copy {
+        match ed.copy_props(&ctx) {
+            0 => {}
+            1 => app.toast("Prop copied: go to another formation and paste it (Ctrl/Cmd+V)"),
+            n => app.toast(format!("{n} props copied: go to another formation and paste them (Ctrl/Cmd+V)")),
+        }
     }
     if let Some(text) = paste
-        && let Some(p) = edit::prop_from_clipboard(&text)
+        && let Some(ps) = edit::props_from_clipboard(&text)
         && !ed.playing
-        && ed.paste_prop(Some(p))
     {
-        app.toast(format!("Prop pasted into formation {}", ed.cur() + 1));
+        match ed.paste_props(Some(ps)) {
+            0 => {}
+            1 => app.toast(format!("Prop pasted into formation {}", ed.cur() + 1)),
+            n => app.toast(format!("{n} props pasted into formation {}", ed.cur() + 1)),
+        }
     }
     // Space: play/pause on release, unless it was held to pan.
     let (pressed, released) = ctx.input_mut(|i| {
@@ -1047,11 +1065,7 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                         ed.show_inspector &= !ed.show_formations;
                     }
                     if ed.can_edit {
-                        let n = match &ed.sel {
-                            Selection::Dancers(s) => s.len(),
-                            Selection::Prop(_) => 1,
-                            Selection::None => 0,
-                        };
+                        let n = ed.sel.len();
                         let label = if n > 0 { format!("Details ({n})") } else { "Details".to_owned() };
                         if ui.add(egui::Button::selectable(ed.show_inspector, label)).clicked() {
                             ed.show_inspector = !ed.show_inspector;
@@ -1071,13 +1085,13 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                                 }
                             }
                             ui.separator();
-                            if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied prop")).clicked() {
-                                ed.paste_prop(None);
+                            if ui.add_enabled(Editor::has_copied_prop(), egui::Button::new("Paste copied props")).clicked() {
+                                ed.paste_props(None);
                                 ui.close();
                             }
                         });
                         ui.toggle_value(&mut ed.multi_select, "Box select")
-                            .on_hover_text("Drag on empty space to select several dancers with a box");
+                            .on_hover_text("Drag on empty space to select several dancers (or props) with a box");
                     }
                     ui.separator();
                     if ui.button("Fit").clicked() {
