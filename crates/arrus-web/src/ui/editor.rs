@@ -1001,12 +1001,7 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                     // Who else has it open, left of Undo (like a shared document).
                     widgets::presence(ui, &ed.live.others(), 6);
-                    if ui.button("Export PDF").on_hover_text("One page per formation, to share with people who don't use Eightcount").clicked() {
-                        export_pdf(ed, app);
-                    }
-                    if ui.button("Export video").on_hover_text("The whole timeline as a video, with the music").clicked() {
-                        ed.modal = Some(EdModal::ExportVideo);
-                    }
+                    export_menu(ui, ed, app, "Export ⏷");
                 });
             });
         });
@@ -1102,14 +1097,51 @@ fn start_video(ed: &mut Editor) {
     ed.recording = Some(Recording::default());
 }
 
-/// Download the PDF (of what the server has: wait for pending changes first).
-fn export_pdf(ed: &mut Editor, app: &mut App) {
+/// The Export button: a small menu with PDF, video and the .arrus file.
+fn export_menu(ui: &mut Ui, ed: &mut Editor, app: &mut App, label: &str) {
+    ui.menu_button(label, |ui| {
+        ui.set_min_width(240.0);
+        if menu_item(ui, "PDF", "One page per formation, for people who don't use Eightcount") {
+            download(ed, app, "pdf");
+            ui.close();
+        }
+        if menu_item(ui, "Video", "The whole timeline played back, with the music") {
+            ed.modal = Some(EdModal::ExportVideo);
+            ui.close();
+        }
+        if menu_item(ui, ".arrus file", "The choreography itself, to keep a copy or import it elsewhere") {
+            download(ed, app, "export");
+            ui.close();
+        }
+    })
+    .response
+    .on_hover_text("PDF, video or .arrus file");
+}
+
+/// A menu entry with a title and a small line under it.
+fn menu_item(ui: &mut Ui, title: &str, sub: &str) -> bool {
+    let text = egui::text::LayoutJob::default();
+    let mut job = text;
+    let style = ui.style();
+    RichText::new(title).strong().append_to(&mut job, style, egui::FontSelection::Default, Align::Center);
+    RichText::new(format!("\n{sub}")).small().color(theme::text_weak()).append_to(
+        &mut job,
+        style,
+        egui::FontSelection::Default,
+        Align::Center,
+    );
+    ui.add(egui::Button::new(job).frame(false).min_size(vec2(ui.available_width(), 0.0))).clicked()
+}
+
+/// Download `/api/choreographies/{id}/{what}` (of what the server has: wait
+/// for pending changes first).
+fn download(ed: &mut Editor, app: &mut App, what: &str) {
     if ed.live.saving() {
         ed.collect();
         app.toast("Saving your last change first, try again in a moment.");
         return;
     }
-    web::download(&format!("/api/choreographies/{}/pdf", ed.summary.id));
+    web::download(&format!("/api/choreographies/{}/{what}", ed.summary.id));
 }
 
 /// "Saving…" / "All changes saved" / "Offline". Compact: a coloured dot only.
@@ -1200,12 +1232,7 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                         s.is_scene_directions_inverted = inv;
                         ed.set_settings(s, None);
                     }
-                    if ui.button("PDF").clicked() {
-                        export_pdf(ed, app);
-                    }
-                    if ui.button("Video").clicked() {
-                        ed.modal = Some(EdModal::ExportVideo);
-                    }
+                    export_menu(ui, ed, app, "Export");
                     ui.separator();
                     widgets::fullscreen_button(ui);
                 });
