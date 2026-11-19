@@ -39,6 +39,19 @@ pub enum EdModal {
     RemoveMusic,
     /// The name being typed.
     Rename(String),
+    ExportVideo,
+}
+
+/// A video export in progress: the whole timeline plays once while the
+/// stage is recorded.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Recording {
+    /// Frames drawn in the recording layout before recording starts (so the
+    /// first frame of the video is the fitted stage).
+    pub warmup: u32,
+    pub started: bool,
+    /// When playback reached the end (a short hold follows).
+    pub ended_at: Option<f64>,
 }
 
 /// Local preference key: the phone timeline is collapsed.
@@ -108,6 +121,8 @@ pub struct Editor {
     /// Colour changes in the inspector apply only to the current formation
     /// (else to every formation). Only for this screen.
     pub color_this_formation: bool,
+    /// Video export in progress: only the stage is shown.
+    pub recording: Option<Recording>,
     /// Touch: one-finger drags on empty space draw a selection box (instead
     /// of moving the view).
     pub multi_select: bool,
@@ -214,6 +229,7 @@ impl Editor {
             show_next: false,
             show_next_paths: false,
             color_this_formation: false,
+            recording: None,
             multi_select: false,
             touch: false,
             gesture: false,
@@ -765,6 +781,10 @@ pub fn show(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
     }
     ed.tick();
     live::sync(ed, app);
+    if ed.recording.is_some() {
+        record_frame(ed, app, ui);
+        return;
+    }
     if ed.tick_motion() || ed.playing || ed.glide_phase().is_some() {
         ui.ctx().request_repaint();
     } else {
@@ -984,6 +1004,9 @@ fn toolbar(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     if ui.button("Export PDF").on_hover_text("One page per formation, to share with people who don't use Eightcount").clicked() {
                         export_pdf(ed, app);
                     }
+                    if ui.button("Export video").on_hover_text("The whole timeline as a video, with the music").clicked() {
+                        ed.modal = Some(EdModal::ExportVideo);
+                    }
                 });
             });
         });
@@ -1003,6 +1026,80 @@ fn name_label(ui: &mut Ui, ed: &mut Editor, truncate: bool) {
     if r.clicked() {
         ed.modal = Some(EdModal::Rename(ed.doc.name.clone()));
     }
+}
+
+/// One frame of a video export: the stage alone, filling the window, and
+/// the recording's start, progress and end.
+fn record_frame(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
+    let Some(mut rec) = ed.recording else { return };
+    ui.ctx().request_repaint();
+    egui::CentralPanel::default().frame(Frame::new().fill(theme::bg())).show(ui, |ui| stage::show(ed, ui));
+    let name = video_name(&ed.doc.name);
+    let esc = ui.ctx().input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+    let finish = |ed: &mut Editor, app: &mut App, save: bool| {
+        ed.recording = None;
+        ed.pause();
+        ed.need_fit = true;
+        if save {
+            web::video_stop(&name);
+            app.toast("Video exported");
+        } else {
+            web::video_cancel();
+            app.toast("Video export cancelled");
+        }
+    };
+    if !rec.started {
+        rec.warmup += 1;
+        if rec.warmup >= 3 {
+            if let Err(e) = web::video_start(ed.audio.as_ref()) {
+                ed.recording = None;
+                ed.need_fit = true;
+                app.toast_error(format!("Could not record the video: {e}"));
+                return;
+            }
+            rec.started = true;
+            ed.play();
+        }
+        ed.recording = Some(rec);
+        return;
+    }
+    match web::video_request() {
+        Some(save) => return finish(ed, app, save),
+        None if esc => return finish(ed, app, true),
+        None => {}
+    }
+    if !ed.playing {
+        // Hold the last frame a moment so the end is not cut off.
+        let at = *rec.ended_at.get_or_insert(ed.now);
+        if ed.now - at > 0.6 {
+            return finish(ed, app, true);
+        }
+    }
+    let len = ed.timeline_len();
+    web::video_status(&format!(
+        "Recording · {} / {} · keep this tab open",
+        util::fmt_time(ed.t.min(len)),
+        util::fmt_time(len)
+    ));
+    ed.recording = Some(rec);
+}
+
+/// The video's file name (without extension).
+fn video_name(name: &str) -> String {
+    let n: String = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' }).collect();
+    let n = n.trim();
+    if n.is_empty() { "choreography".to_owned() } else { n.to_owned() }
+}
+
+/// Start a video export (after the dialog).
+fn start_video(ed: &mut Editor) {
+    ed.pause();
+    ed.seek(0.0);
+    ed.sel = Selection::None;
+    ed.drag = None;
+    ed.glide = None;
+    ed.need_fit = true;
+    ed.recording = Some(Recording::default());
 }
 
 /// Download the PDF (of what the server has: wait for pending changes first).
@@ -1105,6 +1202,9 @@ fn tool_row(ed: &mut Editor, app: &mut App, ui: &mut Ui) {
                     }
                     if ui.button("PDF").clicked() {
                         export_pdf(ed, app);
+                    }
+                    if ui.button("Video").clicked() {
+                        ed.modal = Some(EdModal::ExportVideo);
                     }
                     ui.separator();
                     widgets::fullscreen_button(ui);
@@ -1367,6 +1467,40 @@ fn modals(ed: &mut Editor, app: &mut App, ctx: &egui::Context) {
                 }
                 Some(Choice::Cancel) => false,
                 None => true,
+            }
+        }
+        EdModal::ExportVideo => {
+            let len = ed.timeline_len();
+            match web::video_format() {
+                None => widgets::dialog(ctx, "video", "Export video", "Close", false, true, |ui| {
+                    ui.label("This browser cannot record video. Try a current Chrome, Edge, Firefox or Safari.");
+                })
+                .is_none(),
+                Some(format) => {
+                    let music = ed.audio.is_some();
+                    match widgets::dialog(ctx, "video", "Export video", "Start", false, len > 0.0, |ui| {
+                        ui.label(format!(
+                            "The choreography plays once from the start while it is recorded, so this takes {}.",
+                            util::fmt_time(len)
+                        ));
+                        ui.label(if music { "The music is in the video." } else { "This choreography has no music: the video is silent." });
+                        ui.label(
+                            RichText::new(format!(
+                                "Only the stage is shown, filling the window: make the window the size you want the video. \
+                                 Keep this tab open until it finishes; you can stop early. Saved as {format}."
+                            ))
+                            .small()
+                            .color(theme::text_weak()),
+                        );
+                    }) {
+                        Some(Choice::Confirm) => {
+                            start_video(ed);
+                            false
+                        }
+                        Some(Choice::Cancel) => false,
+                        None => true,
+                    }
+                }
             }
         }
         EdModal::RemoveMusic => {

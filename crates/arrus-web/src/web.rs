@@ -264,6 +264,126 @@ export function app_pick(accept, multiple, done) {
   };
   window.ArusApp.postMessage(JSON.stringify({ type: 'pick', id, accept, multiple }));
 }
+// Video export: record the app's canvas (and the music) with MediaRecorder.
+// The bar with Stop / Cancel is a page element above the canvas, so it is
+// not in the video.
+let rec = null;
+const audioGraphs = new WeakMap();
+function videoMime() {
+  if (typeof MediaRecorder === 'undefined') return '';
+  const kinds = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return kinds.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+}
+export function video_format() {
+  if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return '';
+  const m = videoMime();
+  return m.includes('mp4') ? 'MP4' : 'WebM';
+}
+function videoBar() {
+  let bar = document.getElementById('video_bar');
+  if (bar) return bar;
+  bar = document.createElement('div');
+  bar.id = 'video_bar';
+  bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;display:flex;gap:10px;align-items:center;' +
+    'padding:8px 10px 8px 14px;border-radius:10px;background:rgba(20,20,24,.92);color:#e8e8eb;font:14px system-ui,-apple-system,sans-serif;' +
+    'box-shadow:0 4px 18px rgba(0,0,0,.4);max-width:calc(100vw - 32px)';
+  const dot = document.createElement('span');
+  dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#f05252;flex:none';
+  const text = document.createElement('span');
+  text.className = 'video_text';
+  const btn = (label, what, bg) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'border:0;border-radius:6px;padding:6px 10px;font:inherit;cursor:pointer;color:#fff;background:' + bg;
+    b.onclick = () => { if (rec) rec.asked = what; };
+    return b;
+  };
+  bar.append(dot, text, btn('Stop and save', 'save', '#6e44e0'), btn('Cancel', 'cancel', '#3a3a42'));
+  document.body.append(bar);
+  return bar;
+}
+export function video_start(audio) {
+  if (rec) return 'A video is already being recorded.';
+  const canvas = document.getElementById('arus_canvas');
+  if (!canvas || !canvas.captureStream || typeof MediaRecorder === 'undefined') return 'This browser cannot record video.';
+  const stream = canvas.captureStream(30);
+  if (audio) {
+    try {
+      let g = audioGraphs.get(audio);
+      if (!g) {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaElementSource(audio);
+        src.connect(ctx.destination);
+        const dest = ctx.createMediaStreamDestination();
+        src.connect(dest);
+        g = { ctx, dest };
+        audioGraphs.set(audio, g);
+      }
+      if (g.ctx.state === 'suspended') g.ctx.resume();
+      for (const t of g.dest.stream.getAudioTracks()) stream.addTrack(t);
+    } catch (e) {
+      console.warn('video: no music', e);
+    }
+  }
+  const mimeType = videoMime();
+  let r;
+  try {
+    r = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 8000000 } : {});
+  } catch (e) {
+    stream.getVideoTracks().forEach((t) => t.stop());
+    return String(e);
+  }
+  const chunks = [];
+  r.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec = { r, chunks, stream, asked: '' };
+  r.start(1000);
+  videoBar().style.display = 'flex';
+  return '';
+}
+export function video_status(text) {
+  const t = document.querySelector('#video_bar .video_text');
+  if (t) t.textContent = text;
+}
+export function video_request() {
+  return rec ? rec.asked : '';
+}
+function videoEnd(save, name) {
+  if (!rec) return;
+  const { r, chunks, stream } = rec;
+  rec = null;
+  const bar = document.getElementById('video_bar');
+  if (bar) bar.style.display = 'none';
+  r.onstop = () => {
+    stream.getVideoTracks().forEach((t) => t.stop());
+    if (!save || !chunks.length) return;
+    const type = (r.mimeType || 'video/webm').split(';')[0];
+    save_blob(new Blob(chunks, { type }), name + (type.includes('mp4') ? '.mp4' : '.webm'));
+  };
+  r.stop();
+}
+export function video_stop(name) { videoEnd(true, name); }
+export function video_cancel() { videoEnd(false, ''); }
+async function save_blob(blob, name) {
+  if (app_bridge()) {
+    const data = await new Promise((ok, err) => {
+      const fr = new FileReader();
+      fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => err(fr.error);
+      fr.readAsDataURL(blob);
+    });
+    window.ArusApp.postMessage(JSON.stringify({ type: 'save', name, mime: blob.type || 'video/webm', data }));
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.style.display = 'none';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 export function device_os() {
   const ua = navigator.userAgent;
   if (/android/i.test(ua)) return 'android';
@@ -285,6 +405,56 @@ extern "C" {
     fn app_pick(accept: &str, multiple: bool, done: &JsValue);
     #[wasm_bindgen(js_name = device_os)]
     fn js_device_os() -> String;
+    #[wasm_bindgen(js_name = video_format)]
+    fn js_video_format() -> String;
+    #[wasm_bindgen(js_name = video_start)]
+    fn js_video_start(audio: &JsValue) -> String;
+    #[wasm_bindgen(js_name = video_status)]
+    fn js_video_status(text: &str);
+    #[wasm_bindgen(js_name = video_request)]
+    fn js_video_request() -> String;
+    #[wasm_bindgen(js_name = video_stop)]
+    fn js_video_stop(name: &str);
+    #[wasm_bindgen(js_name = video_cancel)]
+    fn js_video_cancel();
+}
+
+/// The file type video export makes here ("MP4" or "WebM"), or `None`
+/// when this browser cannot record the canvas.
+pub fn video_format() -> Option<String> {
+    Some(js_video_format()).filter(|f| !f.is_empty())
+}
+
+/// Start recording the app's canvas, with the music of `audio` if given.
+pub fn video_start(audio: Option<&Audio>) -> Result<(), String> {
+    let a = audio.map_or(JsValue::NULL, |a| a.el.clone().into());
+    let e = js_video_start(&a);
+    if e.is_empty() { Ok(()) } else { Err(e) }
+}
+
+/// The text on the recording bar.
+pub fn video_status(text: &str) {
+    js_video_status(text);
+}
+
+/// What the person asked for on the recording bar: `Some(true)` stop and
+/// save, `Some(false)` cancel.
+pub fn video_request() -> Option<bool> {
+    match js_video_request().as_str() {
+        "save" => Some(true),
+        "cancel" => Some(false),
+        _ => None,
+    }
+}
+
+/// Stop recording and save the video as `name` (the extension is added).
+pub fn video_stop(name: &str) {
+    js_video_stop(name);
+}
+
+/// Stop recording and drop the video.
+pub fn video_cancel() {
+    js_video_cancel();
 }
 
 /// Running inside one of the Eightcount apps (not a browser).

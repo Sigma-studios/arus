@@ -895,11 +895,16 @@ impl eframe::App for App {
         // Phones: the editor's own bar (with its back button) is enough; the
         // app header would only take room from the stage.
         let in_phone_editor = self.compact && self.screen == Screen::Editor && self.editor.is_some();
-        if !in_phone_editor {
+        // A video export shows the stage alone (it is what gets recorded).
+        let recording =
+            self.screen == Screen::Editor && self.editor.as_ref().is_some_and(|e| e.recording.is_some());
+        if !in_phone_editor && !recording {
             self.top_bar(ui);
         }
-        update::bar(self, ui);
-        if !in_phone_editor {
+        if !recording {
+            update::bar(self, ui);
+        }
+        if !in_phone_editor && !recording {
             keep::bar(self, ui);
             confirm::bar(self, ui);
         }
@@ -924,12 +929,14 @@ impl eframe::App for App {
                 }
             }
         }
-        self.new_team_dialog(&ctx);
-        keep::dialog(self, &ctx);
-        account::dialog(self, &ctx);
-        settings::dialog(self, &ctx);
-        self.toasts_ui(&ctx);
-        self.alerts_ui(&ctx);
+        if !recording {
+            self.new_team_dialog(&ctx);
+            keep::dialog(self, &ctx);
+            account::dialog(self, &ctx);
+            settings::dialog(self, &ctx);
+            self.toasts_ui(&ctx);
+            self.alerts_ui(&ctx);
+        }
         web::set_unsaved(self.editor.as_ref().is_some_and(|e| e.dirty));
     }
 }

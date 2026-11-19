@@ -37,7 +37,10 @@ enum Hit {
 }
 
 pub fn show(ed: &mut Editor, ui: &mut Ui) {
-    let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    // Recording a video: the stage is only drawn, nothing reacts to the pointer.
+    let recording = ed.recording.is_some();
+    let sense = if recording { Sense::hover() } else { Sense::click_and_drag() };
+    let (rect, resp) = ui.allocate_exact_size(ui.available_size(), sense);
     // The part of the stage area actually on screen: fit and centre on that,
     // so an overflowing row elsewhere can never push the stage off-screen.
     let visible = rect.intersect(ui.ctx().content_rect());
@@ -50,9 +53,9 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let resized = (visible.size() - ed.last_stage_size).length() > 1.0;
     ed.last_stage_size = visible.size();
     // Room for the floating toolbar at the top.
-    let top = if ed.compact { 0.0 } else { 40.0 };
+    let top = if ed.compact || recording { 0.0 } else { 40.0 };
     let fit_rect = Rect::from_min_max(visible.min + vec2(0.0, top), visible.max);
-    let margin = if ed.compact { 34.0 } else { FIT_MARGIN };
+    let margin = if ed.compact || recording { 34.0 } else { FIT_MARGIN };
     if ed.view.is_none() || ed.need_fit || (resized && !ed.view_moved) {
         ed.view = Some(View::fit(fit_rect, paint::fit_bounds(&ed.doc), margin, inverted));
         ed.need_fit = false;
@@ -77,7 +80,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     });
     // Touch has no Shift key: the multi-select toggle stands in for it.
     let shift = shift || ed.multi_select;
-    if resp.contains_pointer() || touch.is_some() {
+    if !recording && (resp.contains_pointer() || touch.is_some()) {
         if let Some(t) = &touch {
             view.zoom_at(t.center_pos, t.zoom_delta);
             view.pan(t.translation_delta);
@@ -136,6 +139,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
     let mut hover_dancer = None;
     let mut hover_prop = None;
     if ed.drag.is_none()
+        && !recording
         && let Some(hp) = resp.hover_pos()
     {
         match hit_at(ed, &view, hp) {
@@ -360,7 +364,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
         .live
         .others()
         .iter()
-        .filter(|v| v.formation == Some(here) && !v.selected.is_empty())
+        .filter(|v| !recording && v.formation == Some(here) && !v.selected.is_empty())
         .map(|v| paint::Remote {
             color: theme::person_color(&v.username),
             name: v.username.clone(),
@@ -417,7 +421,7 @@ pub fn show(ed: &mut Editor, ui: &mut Ui) {
 /// Floating tools in the stage's top-left corner. Phones get them in the
 /// editor's tool row instead (nothing floats over the stage there).
 fn overlay(ed: &mut Editor, ui: &mut Ui, rect: Rect) {
-    if ed.compact {
+    if ed.compact || ed.recording.is_some() {
         return;
     }
     let bar = Rect::from_min_size(rect.min + vec2(10.0, 10.0), vec2(rect.width() - 20.0, 36.0));
