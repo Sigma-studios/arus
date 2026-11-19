@@ -42,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .route("/storage", get(me::storage))
         .route("/teams", get(teams::list).post(teams::create))
         .route("/teams/{id}", patch(teams::update).delete(teams::delete))
+        .route("/teams/{id}/owner", put(teams::set_owner))
         .route("/teams/{id}/members", get(teams::list_members).post(teams::add_member))
         .route("/teams/{id}/members/{account}", patch(teams::update_member).delete(teams::remove_member))
         .route("/teams/{id}/invites", get(teams::list_invites).post(teams::create_invite))

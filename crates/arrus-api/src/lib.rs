@@ -34,6 +34,7 @@
 //! | POST | `/api/teams` | [`CreateTeam`] | [`Team`]; 403 `limit_teams` | logged in (an account owns what it creates) |
 //! | PATCH | `/api/teams/{id}` | [`UpdateTeam`] | [`Team`] | owner, admin |
 //! | DELETE | `/api/teams/{id}` | | 204; deletes its choreographies and music | owner, admin |
+//! | PUT  | `/api/teams/{id}/owner` | [`SetTeamOwner`] | [`Team`]; 404 `no_such_account`, 409 `has_owner`, 409 `name_taken` | admin (teams without an owner) |
 //! | GET  | `/api/teams/{id}/members` | | `Vec<TeamMember>` | team members, admin |
 //! | POST | `/api/teams/{id}/members` | [`AddTeamMember`] | [`TeamMember`]; 404 `no_such_account` | owner, admin |
 //! | PATCH | `/api/teams/{id}/members/{account}` | [`UpdateTeamMember`] | [`TeamMember`] | owner, admin |
@@ -356,6 +357,13 @@ pub struct CreateTeam {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateTeam {
     pub name: String,
+}
+
+/// Give a team without an owner (made by the admin, or from before teams had
+/// owners) to an account: it becomes the owner and the team falls under its plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetTeamOwner {
+    pub nickname: String,
 }
 
 /// Someone in a team.

@@ -1,7 +1,9 @@
 //! The current team: who is in it and as what, share links, rename, delete.
 //! The owner (and the admin) manage it; others see who is in it and can leave.
 
-use arrus_api::{AddTeamMember, CreateInvite, Invite, Team, TeamId, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember};
+use arrus_api::{
+    AddTeamMember, CreateInvite, Invite, SetTeamOwner, Team, TeamId, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember,
+};
 use egui::{Frame, Margin, RichText, ScrollArea, Ui};
 
 use super::widgets::{self, Choice};
@@ -16,6 +18,8 @@ pub struct TeamUi {
     add_role: TeamRole,
     link_role: TeamRole,
     rename: Option<String>,
+    /// The admin giving an ownerless team an owner: the nickname typed.
+    set_owner: Option<String>,
     /// Deleting: what was typed to confirm.
     delete: Option<String>,
     remove: Option<TeamMember>,
@@ -32,6 +36,7 @@ impl Default for TeamUi {
             add_role: TeamRole::Guest,
             link_role: TeamRole::Guest,
             rename: None,
+            set_owner: None,
             delete: None,
             remove: None,
             leave: false,
@@ -158,6 +163,34 @@ fn rename(app: &mut App, team: TeamId, name: String) {
     });
 }
 
+fn set_owner(app: &mut App, team: TeamId, nickname: String) {
+    app.net.spawn(async move {
+        let r = net::send::<_, Team>("PUT", &format!("/api/teams/{team}/owner"), &SetTeamOwner { nickname }).await;
+        move |app: &mut App| match r {
+            Ok(t) => {
+                app.team_ui.set_owner = None;
+                app.toast(format!("{} owns “{}” now", t.owner.as_deref().unwrap_or("Someone"), t.name));
+                if let Some(old) = app.teams.iter_mut().find(|o| o.id == t.id) {
+                    *old = t;
+                }
+                after_change(app);
+                app.refresh_storage();
+            }
+            Err(net::ApiError::Http { code: Some(c), .. }) if c == "no_such_account" => {
+                app.toast_error("No account has that nickname.")
+            }
+            Err(net::ApiError::Http { code: Some(c), .. }) if c == "name_taken" => {
+                app.toast_error("They already own a team with this name. Rename one of them first.")
+            }
+            Err(e) => {
+                app.team_ui.set_owner = None;
+                app.fail(e);
+                after_change(app);
+            }
+        }
+    });
+}
+
 fn delete_team(app: &mut App, team: TeamId) {
     app.net.spawn(async move {
         let r = net::send_empty("DELETE", &format!("/api/teams/{team}")).await;
@@ -241,6 +274,12 @@ pub fn card(app: &mut App, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 if ui.button("Rename…").clicked() {
                     app.team_ui.rename = Some(name.clone());
+                }
+                if owner.is_none()
+                    && app.is_admin()
+                    && ui.button("Set owner…").on_hover_text("Give this team to an account: it becomes its owner").clicked()
+                {
+                    app.team_ui.set_owner = Some(String::new());
                 }
                 if ui.button(RichText::new("Delete team…").color(theme::ERROR)).clicked() {
                     app.team_ui.delete = Some(String::new());
@@ -371,6 +410,43 @@ pub fn dialogs(app: &mut App, ctx: &egui::Context) {
                 rename(app, team, name);
             }
             Some(Choice::Cancel) => app.team_ui.rename = None,
+            None => {}
+        }
+    }
+    let name = app.team_name().unwrap_or_default();
+    let candidates: Vec<String> =
+        app.team_ui.members.iter().filter(|m| m.role != TeamRole::Owner).map(|m| m.nickname.clone()).collect();
+    if let Some(nick) = &mut app.team_ui.set_owner {
+        let valid = !nick.trim().is_empty();
+        let c = widgets::dialog(ctx, "set_team_owner", "Set the owner", "Set owner", false, valid, |ui| {
+            ui.label(format!(
+                "“{name}” has no owner. The account you choose owns it from now on: it manages the team, \
+                 and the team counts towards that account's plan."
+            ));
+            ui.add_space(6.0);
+            ui.add(egui::TextEdit::singleline(nick).hint_text("Nickname").desired_width(f32::INFINITY));
+            if !candidates.is_empty() {
+                ui.add_space(4.0);
+                ui.label(RichText::new("In this team:").small().color(theme::text_weak()));
+                ui.horizontal_wrapped(|ui| {
+                    for c in &candidates {
+                        if ui.selectable_label(nick.trim().eq_ignore_ascii_case(c), c).clicked() {
+                            *nick = c.clone();
+                        }
+                    }
+                });
+            }
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("On the free plan, if this puts them over its limits, they choose what stays editable.")
+                    .small()
+                    .color(theme::text_weak()),
+            );
+        });
+        let nick = nick.trim().to_owned();
+        match c {
+            Some(Choice::Confirm) => set_owner(app, team, nick),
+            Some(Choice::Cancel) => app.team_ui.set_owner = None,
             None => {}
         }
     }

@@ -1,7 +1,7 @@
 //! Teams, who is in them (and as what), and their share links.
 
 use arrus_api::{
-    AddTeamMember, CreateInvite, CreateTeam, Invite, PlanLimits, Team, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember,
+    AddTeamMember, CreateInvite, CreateTeam, Invite, PlanLimits, SetTeamOwner, Team, TeamMember, TeamRole, UpdateTeam, UpdateTeamMember,
 };
 use axum::Json;
 use axum::extract::{Path, State};
@@ -148,6 +148,58 @@ pub async fn update(
             db::ensure_team_editable(conn, id)?;
             let name = clean_team_name(conn, &body.name, owner, Some(id))?;
             conn.execute("UPDATE teams SET name = ?1 WHERE id = ?2", params![name, id])?;
+            Ok(Json(load_team(conn, id)?))
+        })
+        .await
+}
+
+/// The admin gives a team without an owner to an account. It becomes the
+/// owner (a member it was before is promoted), and the team falls under its
+/// plan: a free account now over the free limits picks what stays editable.
+pub async fn set_owner(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<i64>,
+    ApiJson(body): ApiJson<SetTeamOwner>,
+) -> Result<Json<Team>> {
+    auth.user.require_admin()?;
+    state
+        .db(move |_, conn| {
+            if owner_of(conn, id)?.is_some() {
+                return Err(Error::with_code(StatusCode::CONFLICT, "has_owner", "this team already has an owner"));
+            }
+            let account: Option<i64> = conn
+                .query_row("SELECT id FROM accounts WHERE nickname_lower = ?1", [body.nickname.trim().to_lowercase()], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            let Some(account) = account else {
+                return Err(Error::with_code(StatusCode::NOT_FOUND, "no_such_account", "no account has that nickname"));
+            };
+            let name: String = conn.query_row("SELECT name FROM teams WHERE id = ?1", [id], |r| r.get(0))?;
+            let taken: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM teams WHERE name = ?1 COLLATE NOCASE AND owner_id = ?2 AND id != ?3",
+                    params![name, account, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if taken.is_some() {
+                return Err(Error::with_code(
+                    StatusCode::CONFLICT,
+                    "name_taken",
+                    "that account already owns a team with this name: rename one first",
+                ));
+            }
+            let tx = conn.transaction()?;
+            tx.execute("UPDATE teams SET owner_id = ?1 WHERE id = ?2", params![account, id])?;
+            tx.execute(
+                "INSERT INTO team_members (team_id, account_id, role, created_at) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT (team_id, account_id) DO UPDATE SET role = excluded.role",
+                params![id, account, TeamRole::Owner.as_str(), db::now()],
+            )?;
+            db::sync_plan(&tx, account)?;
+            tx.commit()?;
             Ok(Json(load_team(conn, id)?))
         })
         .await

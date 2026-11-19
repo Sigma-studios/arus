@@ -1969,3 +1969,48 @@ async fn legal_pages() {
         assert!(text.contains(r#"href="/impressum""#) && text.contains(r#"href="/datenschutz""#), "{p}");
     }
 }
+
+#[tokio::test]
+async fn admin_sets_the_owner_of_an_ownerless_team() {
+    let t = T::new();
+    let admin = t.admin().await;
+    let team = t.team(&admin, "Old crew").await;
+    let a = t.account(&admin, "alice").await;
+    let alice = t.login("alice", a.password.as_deref().unwrap()).await;
+    let b = t.account(&admin, "bob").await;
+    let owner = format!("/api/teams/{}/owner", team.id);
+    // alice is a guest first: she becomes the owner
+    let body = AddTeamMember { nickname: "alice".into(), role: TeamRole::Guest };
+    t.call(Method::POST, &format!("/api/teams/{}/members", team.id), Some(&admin), Some(body)).await;
+
+    // only the admin
+    let r = t.call(Method::PUT, &owner, Some(&alice), Some(SetTeamOwner { nickname: "alice".into() })).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = t.call(Method::PUT, &owner, Some(&admin), Some(SetTeamOwner { nickname: "nobody".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("no_such_account"));
+
+    let r = t.call(Method::PUT, &owner, Some(&admin), Some(SetTeamOwner { nickname: " ALICE ".into() })).await;
+    let got = r.json::<Team>();
+    assert_eq!((got.owner_id, got.owner.as_deref(), got.member_count), (Some(a.id), Some("alice"), 1));
+    assert_eq!(got.choreography_limit, Some(FREE_CHOREOGRAPHIES));
+    let me = t.me(&alice).await;
+    assert_eq!(me.teams[0].role, TeamRole::Owner);
+    // she manages it now
+    let r = t.call(Method::PATCH, &format!("/api/teams/{}", team.id), Some(&alice), Some(UpdateTeam { name: "Mine".into() })).await;
+    assert_eq!(r.status, StatusCode::OK);
+
+    // once it has an owner, it stays theirs
+    let r = t.call(Method::PUT, &owner, Some(&admin), Some(SetTeamOwner { nickname: "bob".into() })).await;
+    assert_eq!(r.error().code.as_deref(), Some("has_owner"));
+
+    // an account cannot end up with two teams of the same name
+    let other = t.team(&admin, "Mine").await;
+    let r = t
+        .call(Method::PUT, &format!("/api/teams/{}/owner", other.id), Some(&admin), Some(SetTeamOwner { nickname: "alice".into() }))
+        .await;
+    assert_eq!(r.error().code.as_deref(), Some("name_taken"));
+    let r = t
+        .call(Method::PUT, &format!("/api/teams/{}/owner", other.id), Some(&admin), Some(SetTeamOwner { nickname: "bob".into() }))
+        .await;
+    assert_eq!(r.json::<Team>().owner_id, Some(b.id));
+}
